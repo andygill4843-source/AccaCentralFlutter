@@ -1,121 +1,119 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 
-void main() {
-  runApp(const MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  runApp(const AccaCentralApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+// Champion Navy palette — same hex values as Colors.swift
+class AccaColors {
+  static const primary = Color(0xFF0F1B3C);
+  static const secondary = Color(0xFF1D2E5C);
+  static const gold = Color(0xFFE8B923);
+  static const background = Color(0xFFF4F4F0);
+  static const textPrimary = Color(0xFF0F1B3C);
+  static const textSecondary = Color(0xFF5F5E5A);
+}
 
-  // This widget is the root of your application.
+class LeagueTableEntry {
+  final String displayName;
+  final int totalBasePoints;
+  final double totalWeightedPoints;
+  final int legsWon;
+  final int legsPlayed;
+
+  const LeagueTableEntry({
+    required this.displayName,
+    required this.totalBasePoints,
+    required this.totalWeightedPoints,
+    required this.legsWon,
+    required this.legsPlayed,
+  });
+}
+
+// Mock data standing in for ScoringEngine.buildLeagueTable's real output —
+// no Firestore reads wired up yet, that's the next step.
+final mockEntries = [
+  const LeagueTableEntry(displayName: "Andy", totalBasePoints: 21, totalWeightedPoints: 34.5, legsWon: 7, legsPlayed: 10),
+  const LeagueTableEntry(displayName: "Sam", totalBasePoints: 18, totalWeightedPoints: 41.0, legsWon: 6, legsPlayed: 10),
+  const LeagueTableEntry(displayName: "Priya", totalBasePoints: 18, totalWeightedPoints: 22.5, legsWon: 6, legsPlayed: 9),
+  const LeagueTableEntry(displayName: "Jordan", totalBasePoints: 12, totalWeightedPoints: 15.0, legsWon: 4, legsPlayed: 10),
+];
+
+class AccaCentralApp extends StatelessWidget {
+  const AccaCentralApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Acca Central',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+        scaffoldBackgroundColor: AccaColors.background,
+        useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const LeagueTableScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
-  }
+class LeagueTableScreen extends StatelessWidget {
+  const LeagueTableScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text('League table'),
+        backgroundColor: AccaColors.primary,
+        foregroundColor: Colors.white,
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+      body: ListView.separated(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: mockEntries.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final entry = mockEntries[index];
+          return ListTile(
+            leading: SizedBox(
+              width: 28,
+              child: Text(
+                '${index + 1}',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: index == 0 ? AccaColors.gold : AccaColors.textSecondary,
+                ),
+              ),
             ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+            title: Text(
+              entry.displayName,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+            ),
+            subtitle: Text(
+              '${entry.legsWon}/${entry.legsPlayed} legs won',
+              style: const TextStyle(fontSize: 12, color: AccaColors.textSecondary),
+            ),
+            trailing: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${entry.totalBasePoints} pts',
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AccaColors.primary),
+                ),
+                Text(
+                  '${entry.totalWeightedPoints.toStringAsFixed(1)} weighted',
+                  style: const TextStyle(fontSize: 11, color: AccaColors.textSecondary),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }

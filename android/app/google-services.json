@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "634734461787",
+    "project_id": "accacentral",
+    "storage_bucket": "accacentral.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:634734461787:android:1f041c495995670393d07e",
+        "android_client_info": {
+          "package_name": "com.example.acca_central"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBaeg-bkVH--EMxYXY4ov6V5suxArKT4Zc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
