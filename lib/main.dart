@@ -3,6 +3,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'firestore_service.dart';
 import 'scoring_engine.dart';
+import 'app_state.dart';
+import 'auth_screen.dart';
+import 'team_setup_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,6 +25,7 @@ class AccaColors {
   static const textSecondary = Color(0xFF5F5E5A);
 }
 
+
 class AccaCentralApp extends StatelessWidget {
   const AccaCentralApp({super.key});
 
@@ -33,24 +37,53 @@ class AccaCentralApp extends StatelessWidget {
         scaffoldBackgroundColor: AccaColors.background,
         useMaterial3: true,
       ),
-      home: const LeagueTableScreen(),
+      home: const RootScreen(),
     );
   }
 }
 
+class RootScreen extends StatefulWidget {
+  const RootScreen({super.key});
+
+  @override
+  State<RootScreen> createState() => _RootScreenState();
+}
+
+class _RootScreenState extends State<RootScreen> {
+  final appState = AppState();
+
+  @override
+  void initState() {
+    super.initState();
+    appState.addListener(() => setState(() {}));
+    appState.resolveAuthState();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    switch (appState.screen) {
+      case AppScreen.splash:
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      case AppScreen.auth:
+        return AuthScreen(appState: appState, onAuthenticated: () {});
+      case AppScreen.teamSetup:
+  	return TeamSetupScreen(appState: appState, onTeamReady: () {});
+      case AppScreen.main:
+  	return LeagueTableScreen(teamId: appState.currentUser?.teamIds.first ?? '');
+    }
+  }
+}
+
 class LeagueTableScreen extends StatefulWidget {
-  const LeagueTableScreen({super.key});
+  final String teamId;
+
+  const LeagueTableScreen({super.key, required this.teamId});
 
   @override
   State<LeagueTableScreen> createState() => _LeagueTableScreenState();
 }
 
 class _LeagueTableScreenState extends State<LeagueTableScreen> {
-  // TEMPORARY — replace with the real signed-in user's team ID once
-  // auth/team-setup screens are rebuilt. Paste a real team document ID
-  // from Firestore here to test against your actual data.
-  static const String testTeamId = 'z1pr9SbvRqmOVqlIk8lw';
-
   List<LeagueTableEntry> entries = [];
   bool isLoading = true;
   String? errorMessage;
@@ -63,8 +96,8 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
 
   Future<void> load() async {
     try {
-      final members = await FirestoreService.instance.fetchMembers(testTeamId);
-      final legs = await FirestoreService.instance.fetchLegs(testTeamId);
+      final members = await FirestoreService.instance.fetchMembers(widget.teamId);
+      final legs = await FirestoreService.instance.fetchLegs(widget.teamId);
       setState(() {
         entries = ScoringEngine.buildLeagueTable(members: members, legs: legs);
         isLoading = false;
