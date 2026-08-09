@@ -24,6 +24,19 @@ class FirestoreService {
     return snapshot.docs.map((doc) => AccumulatorLeg.fromMap(doc.id, doc.data())).toList();
   }
 
+  Future<List<GameWeek>> fetchGameWeeks(String teamId) async {
+    final snapshot = await _db
+        .collection('gameWeeks')
+        .where('teamId', isEqualTo: teamId)
+        .orderBy('weekNumber')
+        .get();
+    return snapshot.docs.map((doc) => GameWeek.fromMap(doc.id, doc.data())).toList();
+  }
+
+  Future<void> createGameWeek(GameWeek gameWeek) async {
+    await _db.collection('gameWeeks').add(gameWeek.toMap());
+  }
+
 
 Future<Team> createTeam({required String name, required String season, required String managerId}) async {
     final inviteCode = _generateInviteCode();

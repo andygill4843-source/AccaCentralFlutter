@@ -6,6 +6,7 @@ import 'scoring_engine.dart';
 import 'app_state.dart';
 import 'auth_screen.dart';
 import 'team_setup_screen.dart';
+import 'gameweek_setup_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,15 +70,16 @@ class _RootScreenState extends State<RootScreen> {
       case AppScreen.teamSetup:
   	return TeamSetupScreen(appState: appState, onTeamReady: () {});
       case AppScreen.main:
-  	return LeagueTableScreen(teamId: appState.currentUser?.teamIds.first ?? '');
+  	return LeagueTableScreen(teamId: appState.currentUser?.teamIds.first ?? '', appState: appState);
     }
   }
 }
 
 class LeagueTableScreen extends StatefulWidget {
   final String teamId;
+  final AppState appState;
 
-  const LeagueTableScreen({super.key, required this.teamId});
+  const LeagueTableScreen({super.key, required this.teamId, required this.appState});
 
   @override
   State<LeagueTableScreen> createState() => _LeagueTableScreenState();
@@ -114,10 +116,27 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('League table'),
-        backgroundColor: AccaColors.primary,
-        foregroundColor: Colors.white,
-      ),
+ 	 title: const Text('League table'),
+ 	 backgroundColor: AccaColors.primary,
+ 	 foregroundColor: Colors.white,
+  	 actions: [
+    		IconButton(
+      			icon: const Icon(Icons.add_circle_outline),
+      			onPressed: () async {
+        			await Navigator.of(context).push(
+          				MaterialPageRoute(builder: (_) => GameWeekSetupScreen(appState: widget.appState)),
+        			);
+        			load();
+      			},
+    		),
+    		IconButton(
+      			icon: const Icon(Icons.logout),
+      			onPressed: () async {
+        			await widget.appState.logOut();
+      			},
+    		),
+  	],
+),
       body: RefreshIndicator(
         onRefresh: load,
         child: isLoading
