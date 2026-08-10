@@ -16,6 +16,10 @@ class FirestoreService {
     return snapshot.docs.map((doc) => Member.fromMap(doc.id, doc.data())).toList();
   }
 
+  Future<void> updateLegOutcome({required String legId, required LegOutcome outcome}) async {
+    await _db.collection('legs').doc(legId).update({'outcome': outcome.value});
+  }
+
   Future<List<AccumulatorLeg>> fetchLegs(String teamId) async {
     final snapshot = await _db
         .collection('legs')

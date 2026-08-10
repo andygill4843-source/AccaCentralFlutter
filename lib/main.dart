@@ -8,6 +8,7 @@ import 'auth_screen.dart';
 import 'team_setup_screen.dart';
 import 'gameweek_setup_screen.dart';
 import 'submit_leg_screen.dart';
+import 'manual_settlement_screen.dart';
 
 
 void main() async {
@@ -26,6 +27,8 @@ class AccaColors {
   static const background = Color(0xFFF4F4F0);
   static const textPrimary = Color(0xFF0F1B3C);
   static const textSecondary = Color(0xFF5F5E5A);
+  static const win = Color(0xFF16A34A);
+  static const loss = Color(0xFFDC2626);
 }
 
 
@@ -170,6 +173,15 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
               await widget.appState.logOut();
             },
           ),
+	  IconButton(
+  	    icon: const Icon(Icons.check_circle_outline),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => ManualSettlementScreen(teamId: widget.teamId)),
+    	      );
+              load();
+            },
+	  ),
         ],
       ),
       body: RefreshIndicator(
