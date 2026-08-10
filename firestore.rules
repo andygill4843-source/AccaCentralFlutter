@@ -1,0 +1,97 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function teamData(teamId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)).data;
+    }
+
+    function isMemberOfTeam(teamId) {
+      return isSignedIn() && request.auth.uid in teamData(teamId).memberIds;
+    }
+
+    function isTeamManager(teamId) {
+      return isSignedIn() && teamData(teamId).managerId == request.auth.uid;
+    }
+
+    function ownsMemberDoc(memberId) {
+      return isSignedIn()
+        && get(/databases/$(database)/documents/members/$(memberId)).data.userId == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read: if isSelf(userId);
+      allow create: if isSelf(userId);
+      allow update: if isSelf(userId)
+        && request.resource.data.username == resource.data.username;
+      allow delete: if false;
+    }
+
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /teams/{teamId} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && request.resource.data.managerId == request.auth.uid
+        && request.resource.data.memberIds == [request.auth.uid];
+
+      allow update: if isSignedIn() && (
+        resource.data.managerId == request.auth.uid ||
+        (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds']) &&
+          request.resource.data.memberIds == resource.data.memberIds.concat([request.auth.uid])
+        )
+      );
+
+      allow delete: if isTeamManager(teamId);
+    }
+
+    match /members/{memberId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && isMemberOfTeam(request.resource.data.teamId);
+
+      allow update: if false;
+      allow delete: if isTeamManager(resource.data.teamId);
+    }
+
+    match /gameWeeks/{gameWeekId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+      allow create: if isTeamManager(request.resource.data.teamId);
+      allow update: if isTeamManager(resource.data.teamId);
+      allow delete: if false;
+    }
+
+    match /legs/{legId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+
+      allow create: if isSignedIn()
+        && ownsMemberDoc(request.resource.data.memberId)
+        && isMemberOfTeam(request.resource.data.teamId)
+        && request.resource.data.outcome == 'pending';
+
+      allow update: if isTeamManager(resource.data.teamId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outcome']);
+
+      allow delete: if isSignedIn()
+    	&& ownsMemberDoc(resource.data.memberId)
+    	&& resource.data.outcome == 'pending';
+    }
+  }
+}
