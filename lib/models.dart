@@ -8,6 +8,7 @@ class Team {
   final String inviteCode;
   final DateTime createdAt;
   final String season;
+  final String? activeGameWeekId;
 
   Team({
     this.id,
@@ -17,6 +18,7 @@ class Team {
     required this.inviteCode,
     required this.createdAt,
     required this.season,
+    this.activeGameWeekId,
   });
 
   factory Team.fromMap(String id, Map<String, dynamic> map) {
@@ -28,6 +30,7 @@ class Team {
       inviteCode: map['inviteCode'],
       createdAt: map['createdAt'].toDate(),
       season: map['season'],
+      activeGameWeekId: map['activeGameWeekId'], // absent on older docs — reads as null, that's fine
     );
   }
 
@@ -39,6 +42,7 @@ class Team {
       'inviteCode': inviteCode,
       'createdAt': createdAt,
       'season': season,
+      'activeGameWeekId': activeGameWeekId,
     };
   }
 }

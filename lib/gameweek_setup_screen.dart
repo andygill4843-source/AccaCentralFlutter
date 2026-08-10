@@ -83,15 +83,6 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     });
 
     try {
-      final existing = await FirestoreService.instance.fetchGameWeeks(teamId);
-      if (existing.any((g) => !g.isSettled)) {
-        setState(() {
-          isLoading = false;
-          errorMessage = "There's already an active gameweek. End it before creating a new one.";
-        });
-        return;
-      }
-
       final gameWeek = GameWeek(
         id: null,
         teamId: teamId,
@@ -106,7 +97,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     } catch (e) {
       setState(() {
         isLoading = false;
-        errorMessage = e.toString();
+        errorMessage = e.toString().replaceFirst('Exception: ', '');
       });
     }
   }

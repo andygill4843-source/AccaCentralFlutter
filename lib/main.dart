@@ -103,7 +103,7 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
     if (gameWeek == null || gameWeek.id == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No active gameweek to submit a leg for.')),
+          const SnackBar(content: Text('No active gameweeks for selection. Please ask the boss to setup a new gameweek.')),
         );
       }
       return;
