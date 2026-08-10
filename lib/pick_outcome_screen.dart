@@ -4,6 +4,7 @@ import 'firestore_service.dart';
 import 'models.dart';
 import 'main.dart'; // for AccaColors
 import 'package:collection/collection.dart';
+import 'fixture_matching_service.dart';
 
 class _PricedOutcome {
   final String name;
@@ -128,11 +129,17 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     return outcome.name;
   }
 
-  Future<void> submit(_PricedOutcome outcome, BetType betType) async {
+ Future<void> submit(_PricedOutcome outcome, BetType betType) async {
     setState(() {
       isSubmitting = true;
       errorMessage = null;
     });
+
+    final sportmonksId = await FixtureMatchingService.resolveSportmonksFixtureId(
+      homeTeam: widget.event.homeTeam,
+      awayTeam: widget.event.awayTeam,
+      kickoff: widget.event.commenceTime,
+    );
 
     final selectionDescription = '${displayName(outcome, betType)} — ${widget.event.homeTeam} vs ${widget.event.awayTeam}';
 
@@ -150,7 +157,7 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       bookmaker: outcome.bestBookmaker,
       bookmakerPrices: outcome.allPrices,
       bookmakerLinks: outcome.allLinks,
-      sportmonksFixtureId: null, // resolved separately when we rebuild the live view
+      sportmonksFixtureId: sportmonksId,
       outcome: LegOutcome.pending,
       submittedAt: DateTime.now(),
     );
