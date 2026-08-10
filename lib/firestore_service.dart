@@ -28,6 +28,17 @@ class FirestoreService {
     return snapshot.docs.map((doc) => AccumulatorLeg.fromMap(doc.id, doc.data())).toList();
   }
 
+  Future<void> setGameWeekBookmaker({
+    required String gameWeekId,
+    required String bookmaker,
+    required double combinedOdds,
+  }) async {
+    await _db.collection('gameWeeks').doc(gameWeekId).update({
+      'selectedBookmaker': bookmaker,
+      'combinedOdds': combinedOdds,
+    });
+  }
+
   Future<List<GameWeek>> fetchGameWeeks(String teamId) async {
     final snapshot = await _db
         .collection('gameWeeks')

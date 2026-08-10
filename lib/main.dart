@@ -9,6 +9,7 @@ import 'team_setup_screen.dart';
 import 'gameweek_setup_screen.dart';
 import 'submit_leg_screen.dart';
 import 'manual_settlement_screen.dart';
+import 'accumulator_summary_screen.dart';
 
 
 void main() async {
@@ -130,6 +131,22 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
     if (submitted == true) load();
   }
 
+  Future<void> openAccumulatorSummary() async {
+    final gameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
+    if (gameWeek == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No active gameweeks for selection.')),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => AccumulatorSummaryScreen(gameWeek: gameWeek)),
+    );
+  }
+
   Future<void> load() async {
     try {
       final members = await FirestoreService.instance.fetchMembers(widget.teamId);
@@ -173,6 +190,10 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
               await widget.appState.logOut();
             },
           ),
+	  IconButton(
+  	    icon: const Icon(Icons.bar_chart),
+  	    onPressed: openAccumulatorSummary,
+	  ),
 	  IconButton(
   	    icon: const Icon(Icons.check_circle_outline),
             onPressed: () async {
