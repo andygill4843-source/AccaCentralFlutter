@@ -7,6 +7,8 @@ import 'app_state.dart';
 import 'auth_screen.dart';
 import 'team_setup_screen.dart';
 import 'gameweek_setup_screen.dart';
+import 'submit_leg_screen.dart';
+
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -96,6 +98,35 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
     load();
   }
 
+  Future<void> openSubmitLeg() async {
+    final gameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
+    if (gameWeek == null || gameWeek.id == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No active gameweek to submit a leg for.')),
+        );
+      }
+      return;
+    }
+    final userId = widget.appState.currentUser?.id;
+    if (userId == null) return;
+    final member = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
+    if (member == null || member.id == null || !mounted) return;
+
+    final submitted = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => SubmitLegScreen(
+          gameWeekId: gameWeek.id!,
+          memberId: member.id!,
+          teamId: widget.teamId,
+          windowStart: gameWeek.startDate,
+          windowEnd: gameWeek.endDate,
+        ),
+      ),
+    );
+    if (submitted == true) load();
+  }
+
   Future<void> load() async {
     try {
       final members = await FirestoreService.instance.fetchMembers(widget.teamId);
@@ -116,27 +147,31 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
- 	 title: const Text('League table'),
- 	 backgroundColor: AccaColors.primary,
- 	 foregroundColor: Colors.white,
-  	 actions: [
-    		IconButton(
-      			icon: const Icon(Icons.add_circle_outline),
-      			onPressed: () async {
-        			await Navigator.of(context).push(
-          				MaterialPageRoute(builder: (_) => GameWeekSetupScreen(appState: widget.appState)),
-        			);
-        			load();
-      			},
-    		),
-    		IconButton(
-      			icon: const Icon(Icons.logout),
-      			onPressed: () async {
-        			await widget.appState.logOut();
-      			},
-    		),
-  	],
-),
+        title: const Text('League table'),
+        backgroundColor: AccaColors.primary,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => GameWeekSetupScreen(appState: widget.appState)),
+              );
+              load();
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.sports_soccer),
+            onPressed: openSubmitLeg,
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await widget.appState.logOut();
+            },
+          ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: load,
         child: isLoading

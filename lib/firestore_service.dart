@@ -33,6 +33,28 @@ class FirestoreService {
     return snapshot.docs.map((doc) => GameWeek.fromMap(doc.id, doc.data())).toList();
   }
 
+  Future<GameWeek?> fetchActiveGameWeek(String teamId) async {
+    final gameWeeks = await fetchGameWeeks(teamId);
+    return gameWeeks.where((g) => !g.isSettled).isNotEmpty
+        ? gameWeeks.firstWhere((g) => !g.isSettled)
+        : (gameWeeks.isNotEmpty ? gameWeeks.last : null);
+  }
+
+  Future<void> submitLeg(AccumulatorLeg leg) async {
+    await _db.collection('legs').add(leg.toMap());
+  }
+
+  Future<Member?> fetchMember({required String teamId, required String userId}) async {
+    final snapshot = await _db
+        .collection('members')
+        .where('teamId', isEqualTo: teamId)
+        .where('userId', isEqualTo: userId)
+        .limit(1)
+        .get();
+    if (snapshot.docs.isEmpty) return null;
+    return Member.fromMap(snapshot.docs.first.id, snapshot.docs.first.data());
+  }
+
   Future<void> createGameWeek(GameWeek gameWeek) async {
     await _db.collection('gameWeeks').add(gameWeek.toMap());
   }
