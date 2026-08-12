@@ -56,10 +56,11 @@ service cloud.firestore {
         && request.resource.data.memberIds == [request.auth.uid];
 
       allow update: if isSignedIn() && (
-        resource.data.managerId == request.auth.uid ||
+    	resource.data.managerId == request.auth.uid ||
+    	isTeamManager(teamId) ||
         (
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds']) &&
-          request.resource.data.memberIds == resource.data.memberIds.concat([request.auth.uid])
+      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds']) &&
+      request.resource.data.memberIds == resource.data.memberIds.concat([request.auth.uid])
         )
       );
 
@@ -99,9 +100,9 @@ service cloud.firestore {
       allow update: if isTeamManager(resource.data.teamId)
     	&& request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outcome', 	'decimalOddsAtSelection', 'bookmaker']);
       allow delete: if isSignedIn()
-    	&& ownsMemberDoc(resource.data.memberId)
     	&& resource.data.outcome == 'pending'
-	&& !isGameWeekLocked(resource.data.gameWeekId);
+    	&& (ownsMemberDoc(resource.data.memberId) || isTeamManager(resource.data.teamId))
+    	&& !isGameWeekLocked(resource.data.gameWeekId);
     }
   }
 }

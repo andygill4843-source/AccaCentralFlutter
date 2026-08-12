@@ -144,8 +144,9 @@ class FirestoreService {
     final gameWeekRef = _db.collection('gameWeeks').doc(gameWeekId);
 
     await _db.runTransaction((transaction) async {
-      transaction.update(gameWeekRef, {'isSettled': true});
       final teamSnap = await transaction.get(teamRef);
+
+      transaction.update(gameWeekRef, {'isSettled': true});
       if (teamSnap.data()?['activeGameWeekId'] == gameWeekId) {
         transaction.update(teamRef, {'activeGameWeekId': null});
       }

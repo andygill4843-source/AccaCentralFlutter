@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'firestore_service.dart';
 import 'models.dart';
 import 'main.dart'; // for AccaColors
+import 'package:flutter/services.dart';
 
 class _BookmakerOption {
   final String bookmaker;
@@ -28,6 +29,8 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
   String? errorMessage;
   String? selectedBookmaker;
   double? combinedOdds;
+  Map<String, String> memberNames = {}; // memberId -> displayName
+  bool isRejecting = false;
 
   @override
   void initState() {
@@ -42,8 +45,10 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     if (widget.gameWeek.id == null) return;
     try {
       final allLegs = await FirestoreService.instance.fetchLegs(widget.gameWeek.teamId);
+      final members = await FirestoreService.instance.fetchMembers(widget.gameWeek.teamId);
       setState(() {
         legs = allLegs.where((l) => l.gameWeekId == widget.gameWeek.id).toList();
+        memberNames = {for (final m in members) if (m.id != null) m.id!: m.displayName};
         isLoading = false;
       });
     } catch (e) {
@@ -51,6 +56,23 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         errorMessage = e.toString();
         isLoading = false;
       });
+    }
+  }
+
+  Future<void> rejectLeg(AccumulatorLeg leg) async {
+    if (leg.id == null) return;
+    setState(() => isRejecting = true);
+    try {
+      await FirestoreService.instance.deleteLeg(leg.id!);
+      await load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't reject leg: ${e.toString()}")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isRejecting = false);
     }
   }
 
@@ -93,11 +115,104 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         isLocked = true;
         isSaving = false;
       });
+
+      if (mounted) {
+        await offerTransfer(option);
+      }
     } catch (e) {
       setState(() => isSaving = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error locking gameweek: ${e.toString()}')),
+        );
+      }
+    }
+  }
+
+  Future<void> offerTransfer(_BookmakerOption option) async {
+    final links = option.legLinks.where((pair) => pair.$2 != null).toList();
+
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Go to ${option.bookmaker}?'),
+        content: Text(
+          links.isEmpty
+              ? "No direct betslip links are available for ${option.bookmaker} on these legs. "
+                  "You can still copy or share the leg list below to place the bets manually."
+              : 'Would you like to be transferred to the ${option.bookmaker} website? '
+                  "All ${links.length} leg${links.length == 1 ? '' : 's'} of the accumulator will open there — "
+                  'please double-check the betslip is complete before staking anything, '
+                  "as this depends on ${option.bookmaker}'s own website behaviour.",
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, 'cancel'), child: const Text('Not now')),
+          TextButton(onPressed: () => Navigator.pop(context, 'whatsapp'), child: const Text('Share on WhatsApp')),
+          TextButton(onPressed: () => Navigator.pop(context, 'copy'), child: const Text('Copy leg list')),
+          if (links.isNotEmpty)
+            TextButton(onPressed: () => Navigator.pop(context, 'transfer'), child: const Text('Transfer me')),
+        ],
+      ),
+    );
+
+    switch (action) {
+      case 'transfer':
+        for (final pair in links) {
+          final url = Uri.parse(pair.$2!);
+          await launchUrl(url, mode: LaunchMode.externalApplication);
+          // Small pause between opens so the bookmaker's site has a moment
+          // to register each selection before the next one loads, on
+          // bookmakers where that matters.
+          await Future.delayed(const Duration(milliseconds: 800));
+        }
+        break;
+      case 'copy':
+        await copyLegList(option);
+        break;
+      case 'whatsapp':
+        await shareViaWhatsApp(option);
+        break;
+      default:
+        break;
+    }
+  }
+
+  String buildLegListText(_BookmakerOption option) {
+    final buffer = StringBuffer();
+    buffer.writeln('Acca Central — Gameweek ${widget.gameWeek.weekNumber}');
+    buffer.writeln('Bookmaker: ${option.bookmaker}');
+    buffer.writeln('Combined odds: ${option.combinedOdds.toStringAsFixed(2)}');
+    buffer.writeln();
+    for (final leg in legs) {
+      final name = memberNames[leg.memberId] ?? 'Unknown';
+      buffer.writeln('$name: ${leg.selectionDescription}');
+      final price = (leg.bookmakerPrices ?? {})[option.bookmaker];
+      if (price != null) {
+        buffer.writeln('  ${price.toStringAsFixed(2)} @ ${option.bookmaker}');
+      }
+    }
+    return buffer.toString();
+  }
+
+  Future<void> copyLegList(_BookmakerOption option) async {
+    await Clipboard.setData(ClipboardData(text: buildLegListText(option)));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Leg list copied to clipboard.')),
+      );
+    }
+  }
+
+  Future<void> shareViaWhatsApp(_BookmakerOption option) async {
+    final text = buildLegListText(option);
+    final encoded = Uri.encodeComponent(text);
+    final uri = Uri.parse('https://wa.me/?text=$encoded');
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't open WhatsApp — is it installed?")),
         );
       }
     }
@@ -121,7 +236,13 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                   : ListView(
                       padding: const EdgeInsets.all(16),
                       children: [
-                        if (isLocked) ...[
+                        if (!isLocked) ...[
+                          const Text('Leg review', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          const SizedBox(height: 8),
+                          for (final leg in legs) _legReviewCard(leg),
+                          const SizedBox(height: 20),
+                        ],
+                        if (selectedBookmaker != null) ...[
                           const Padding(
                             padding: EdgeInsets.only(bottom: 8),
                             child: Row(
@@ -215,4 +336,40 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
       ),
     );
   }
+
+  Widget _legReviewCard(AccumulatorLeg leg) {
+    final name = leg.id != null ? (memberNames[leg.memberId] ?? 'Unknown') : 'Unknown';
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name, style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
+                  const SizedBox(height: 2),
+                  Text(leg.fixtureDescription, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  Text(leg.selectionDescription, style: const TextStyle(fontSize: 13)),
+                  Text(
+                    '${leg.decimalOddsAtSelection.toStringAsFixed(2)} — ${leg.bookmaker}',
+                    style: TextStyle(fontSize: 12, color: AccaColors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            OutlinedButton(
+              onPressed: isRejecting ? null : () => rejectLeg(leg),
+              style: OutlinedButton.styleFrom(foregroundColor: AccaColors.loss, side: BorderSide(color: AccaColors.loss)),
+              child: const Text('Reject'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
 }

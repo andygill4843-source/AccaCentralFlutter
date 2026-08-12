@@ -193,8 +193,16 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
     );
     if (confirmed != true) return;
 
-    await FirestoreService.instance.settleGameWeek(teamId: widget.teamId, gameWeekId: gameWeek.id!);
-    load();
+    try {
+      await FirestoreService.instance.settleGameWeek(teamId: widget.teamId, gameWeekId: gameWeek.id!);
+      load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error ending gameweek: ${e.toString()}')),
+        );
+      }
+    }
   }
 
   Future<void> openAccumulatorSummary() async {
