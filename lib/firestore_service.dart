@@ -16,6 +16,33 @@ class FirestoreService {
     return snapshot.docs.map((doc) => Member.fromMap(doc.id, doc.data())).toList();
   }
 
+  Future<void> deleteLeg(String legId) async {
+    await _db.collection('legs').doc(legId).delete();
+  }
+
+  Future<Team?> fetchTeam(String teamId) async {
+    final doc = await _db.collection('teams').doc(teamId).get();
+    if (!doc.exists) return null;
+    return Team.fromMap(doc.id, doc.data()!);
+  }
+
+  Future<AccumulatorLeg?> fetchMemberLegForGameWeek({
+    required String teamId,
+    required String memberId,
+    required String gameWeekId,
+  }) async {
+    final snapshot = await _db
+        .collection('legs')
+        .where('teamId', isEqualTo: teamId)
+        .where('memberId', isEqualTo: memberId)
+        .where('gameWeekId', isEqualTo: gameWeekId)
+        .orderBy('submittedAt', descending: true)
+        .limit(1)
+        .get();
+    if (snapshot.docs.isEmpty) return null;
+    return AccumulatorLeg.fromMap(snapshot.docs.first.id, snapshot.docs.first.data());
+  }
+
   Future<void> updateLegOutcome({required String legId, required LegOutcome outcome}) async {
     await _db.collection('legs').doc(legId).update({'outcome': outcome.value});
   }
@@ -32,10 +59,29 @@ class FirestoreService {
     required String gameWeekId,
     required String bookmaker,
     required double combinedOdds,
+    required List<AccumulatorLeg> legs,
   }) async {
-    await _db.collection('gameWeeks').doc(gameWeekId).update({
-      'selectedBookmaker': bookmaker,
-      'combinedOdds': combinedOdds,
+    final gameWeekRef = _db.collection('gameWeeks').doc(gameWeekId);
+
+    await _db.runTransaction((transaction) async {
+      // Freeze every leg's odds to this specific bookmaker's price —
+      // this is what actually locks in the weighted points.
+      for (final leg in legs) {
+        if (leg.id == null) continue;
+        final price = (leg.bookmakerPrices ?? {})[bookmaker];
+        if (price == null) continue;
+        final legRef = _db.collection('legs').doc(leg.id);
+        transaction.update(legRef, {
+          'decimalOddsAtSelection': price,
+          'bookmaker': bookmaker,
+        });
+      }
+
+      transaction.update(gameWeekRef, {
+        'selectedBookmaker': bookmaker,
+        'combinedOdds': combinedOdds,
+        'isLocked': true,
+      });
     });
   }
 
@@ -160,6 +206,13 @@ Future<Team> createTeam({required String name, required String season, required 
   }
 
   Future<void> addMember(Member member) async {
-    await _db.collection('members').add(member.toMap());
+    final docId = '${member.teamId}_${member.userId}';
+    await _db.collection('members').doc(docId).set(member.toMap());
+  }
+
+  /// Only a manager can call this — enforced server-side by the rules,
+  /// not just hidden in the UI.
+  Future<void> setMemberRole({required String memberDocId, required MemberRole role}) async {
+    await _db.collection('members').doc(memberDocId).update({'role': role.value});
   }
 }

@@ -20,12 +20,18 @@ service cloud.firestore {
     }
 
     function isTeamManager(teamId) {
-      return isSignedIn() && teamData(teamId).managerId == request.auth.uid;
+      return isSignedIn()
+       && exists(/databases/$(database)/documents/members/$(teamId + '_' + request.auth.uid))
+       && get(/databases/$(database)/documents/members/$(teamId + '_' + request.auth.uid)).data.role == 'manager';
     }
 
     function ownsMemberDoc(memberId) {
       return isSignedIn()
         && get(/databases/$(database)/documents/members/$(memberId)).data.userId == request.auth.uid;
+    }
+
+    function isGameWeekLocked(gameWeekId) {
+       return get(/databases/$(database)/documents/gameWeeks/$(gameWeekId)).data.isLocked == true;
     }
 
     match /users/{userId} {
@@ -61,15 +67,18 @@ service cloud.firestore {
     }
 
     match /members/{memberId} {
-      allow read: if isMemberOfTeam(resource.data.teamId);
+  	allow read: if isMemberOfTeam(resource.data.teamId);
 
-      allow create: if isSignedIn()
-        && request.resource.data.userId == request.auth.uid
-        && isMemberOfTeam(request.resource.data.teamId);
+  	allow create: if isSignedIn()
+    	  && request.resource.data.userId == request.auth.uid
+    	  && isMemberOfTeam(request.resource.data.teamId);
 
-      allow update: if false;
-      allow delete: if isTeamManager(resource.data.teamId);
-    }
+  	allow update: if isTeamManager(resource.data.teamId)
+    	  && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+    	   	&& (request.resource.data.role == 'manager' || request.resource.data.role == 'squad_member');
+
+  	allow delete: if isTeamManager(resource.data.teamId);
+     }
 
     match /gameWeeks/{gameWeekId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
@@ -84,14 +93,15 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && ownsMemberDoc(request.resource.data.memberId)
         && isMemberOfTeam(request.resource.data.teamId)
-        && request.resource.data.outcome == 'pending';
+        && request.resource.data.outcome == 'pending'
+	&& !isGameWeekLocked(request.resource.data.gameWeekId);
 
       allow update: if isTeamManager(resource.data.teamId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outcome']);
-
+    	&& request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outcome', 	'decimalOddsAtSelection', 'bookmaker']);
       allow delete: if isSignedIn()
     	&& ownsMemberDoc(resource.data.memberId)
-    	&& resource.data.outcome == 'pending';
+    	&& resource.data.outcome == 'pending'
+	&& !isGameWeekLocked(resource.data.gameWeekId);
     }
   }
 }

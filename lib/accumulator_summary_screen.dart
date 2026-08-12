@@ -34,6 +34,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     super.initState();
     selectedBookmaker = widget.gameWeek.selectedBookmaker;
     combinedOdds = widget.gameWeek.combinedOdds;
+    isLocked = widget.gameWeek.isLocked;
     load();
   }
 
@@ -74,19 +75,32 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     return options;
   }
 
+  bool isLocked = false;
+
   Future<void> select(_BookmakerOption option) async {
     if (widget.gameWeek.id == null) return;
     setState(() => isSaving = true);
-    await FirestoreService.instance.setGameWeekBookmaker(
-      gameWeekId: widget.gameWeek.id!,
-      bookmaker: option.bookmaker,
-      combinedOdds: option.combinedOdds,
-    );
-    setState(() {
-      selectedBookmaker = option.bookmaker;
-      combinedOdds = option.combinedOdds;
-      isSaving = false;
-    });
+    try {
+      await FirestoreService.instance.setGameWeekBookmaker(
+        gameWeekId: widget.gameWeek.id!,
+        bookmaker: option.bookmaker,
+        combinedOdds: option.combinedOdds,
+        legs: legs,
+      );
+      setState(() {
+        selectedBookmaker = option.bookmaker;
+        combinedOdds = option.combinedOdds;
+        isLocked = true;
+        isSaving = false;
+      });
+    } catch (e) {
+      setState(() => isSaving = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error locking gameweek: ${e.toString()}')),
+        );
+      }
+    }
   }
 
   @override
@@ -107,6 +121,18 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                   : ListView(
                       padding: const EdgeInsets.all(16),
                       children: [
+                        if (isLocked) ...[
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              children: [
+                                Icon(Icons.lock, size: 16, color: Colors.grey),
+                                SizedBox(width: 6),
+                                Text('Gameweek locked — selections are closed', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                              ],
+                            ),
+                          ),
+                        ],
                         if (selectedBookmaker != null) ...[
                           Card(
                             color: AccaColors.gold.withOpacity(0.15),
@@ -162,8 +188,8 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                   ),
                 ),
                 OutlinedButton(
-                  onPressed: isSaving || selectedBookmaker == option.bookmaker ? null : () => select(option),
-                  child: Text(selectedBookmaker == option.bookmaker ? 'Selected' : 'Select'),
+                  onPressed: isSaving || isLocked ? null : () => select(option),
+                  child: Text(selectedBookmaker == option.bookmaker ? 'Selected' : (isLocked ? 'Locked' : 'Select')),
                 ),
               ],
             ),

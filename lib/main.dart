@@ -11,6 +11,9 @@ import 'submit_leg_screen.dart';
 import 'manual_settlement_screen.dart';
 import 'accumulator_summary_screen.dart';
 import 'live_accumulator_screen.dart';
+import 'current_leg_screen.dart';
+import 'profile_screen.dart';
+import 'models.dart';
 
 
 void main() async {
@@ -96,6 +99,8 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
   List<LeagueTableEntry> entries = [];
   bool isLoading = true;
   String? errorMessage;
+  Member? currentMember;
+  GameWeek? activeGameWeek;
 
   @override
   void initState() {
@@ -104,32 +109,92 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
   }
 
   Future<void> openSubmitLeg() async {
-    final gameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
-    if (gameWeek == null || gameWeek.id == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No active gameweeks for selection. Please ask the boss to setup a new gameweek.')),
+    try {
+      final gameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
+      if (gameWeek == null || gameWeek.id == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No active gameweeks for selection.')),
+          );
+        }
+        return;
+      }
+      if (gameWeek.isLocked) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('This gameweek is locked — selections are closed.')),
+          );
+        }
+        return;
+      }
+      final userId = widget.appState.currentUser?.id;
+      if (userId == null) return;
+      final member = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
+      if (member == null || member.id == null || !mounted) return;
+
+      final existingLeg = await FirestoreService.instance.fetchMemberLegForGameWeek(
+        teamId: widget.teamId,
+        memberId: member.id!,
+        gameWeekId: gameWeek.id!,
+      );
+      if (!mounted) return;
+
+      final bool? submitted;
+      if (existingLeg != null) {
+        submitted = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => CurrentLegScreen(
+              leg: existingLeg,
+              gameWeekId: gameWeek.id!,
+              memberId: member.id!,
+              teamId: widget.teamId,
+              windowStart: gameWeek.startDate,
+              windowEnd: gameWeek.endDate,
+            ),
+          ),
+        );
+      } else {
+        submitted = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => SubmitLegScreen(
+              gameWeekId: gameWeek.id!,
+              memberId: member.id!,
+              teamId: widget.teamId,
+              windowStart: gameWeek.startDate,
+              windowEnd: gameWeek.endDate,
+            ),
+          ),
         );
       }
-      return;
+      if (submitted == true) load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: ${e.toString()}')),
+        );
+      }
     }
-    final userId = widget.appState.currentUser?.id;
-    if (userId == null) return;
-    final member = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
-    if (member == null || member.id == null || !mounted) return;
+  }
 
-    final submitted = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => SubmitLegScreen(
-          gameWeekId: gameWeek.id!,
-          memberId: member.id!,
-          teamId: widget.teamId,
-          windowStart: gameWeek.startDate,
-          windowEnd: gameWeek.endDate,
-        ),
+  Future<void> endGameWeek() async {
+    final gameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
+    if (gameWeek == null || gameWeek.id == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('End gameweek?'),
+        content: Text('This ends Week ${gameWeek.weekNumber}. You can create a new gameweek afterward.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('End gameweek')),
+        ],
       ),
     );
-    if (submitted == true) load();
+    if (confirmed != true) return;
+
+    await FirestoreService.instance.settleGameWeek(teamId: widget.teamId, gameWeekId: gameWeek.id!);
+    load();
   }
 
   Future<void> openAccumulatorSummary() async {
@@ -166,6 +231,11 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
 
   Future<void> load() async {
     try {
+      final userId = widget.appState.currentUser?.id;
+      if (userId != null) {
+        currentMember = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
+      }
+      activeGameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
       final members = await FirestoreService.instance.fetchMembers(widget.teamId);
       final legs = await FirestoreService.instance.fetchLegs(widget.teamId);
       setState(() {
@@ -187,44 +257,71 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
         title: const Text('League table'),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline),
-            onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => GameWeekSetupScreen(appState: widget.appState)),
-              );
-              load();
-            },
+      ),
+      bottomNavigationBar: BottomAppBar(
+        color: AccaColors.primary,
+        child: SizedBox(
+          height: 56,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              if (currentMember?.role == MemberRole.manager)
+                IconButton(
+                  icon: Icon(
+                    activeGameWeek != null ? Icons.flag : Icons.add_circle_outline,
+                    color: Colors.white,
+                  ),
+                  tooltip: activeGameWeek != null ? 'End gameweek' : 'New gameweek',
+                  onPressed: () async {
+                    if (activeGameWeek != null) {
+                      await endGameWeek();
+                    } else {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => GameWeekSetupScreen(appState: widget.appState)),
+                      );
+                      load();
+                    }
+                  },
+                ),
+              IconButton(
+                icon: const Icon(Icons.sports_soccer, color: Colors.white),
+                tooltip: 'Pick your leg',
+                onPressed: openSubmitLeg,
+              ),
+              IconButton(
+                icon: const Icon(Icons.live_tv, color: Colors.white),
+                tooltip: 'Live',
+                onPressed: openLiveView,
+              ),
+              if (currentMember?.role == MemberRole.manager)
+                IconButton(
+                  icon: const Icon(Icons.check_circle_outline, color: Colors.white),
+                  tooltip: 'Settle legs',
+                  onPressed: () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => ManualSettlementScreen(teamId: widget.teamId)),
+                    );
+                    load();
+                  },
+                ),
+              if (currentMember?.role == MemberRole.manager)
+                IconButton(
+                  icon: const Icon(Icons.bar_chart, color: Colors.white),
+                  tooltip: 'Best odds',
+                  onPressed: openAccumulatorSummary,
+                ),
+              IconButton(
+                icon: const Icon(Icons.person, color: Colors.white),
+                tooltip: 'Profile',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => ProfileScreen(appState: widget.appState, teamId: widget.teamId)),
+                  );
+                },
+              ),
+            ],
           ),
-          IconButton(
-            icon: const Icon(Icons.sports_soccer),
-            onPressed: openSubmitLeg,
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await widget.appState.logOut();
-            },
-          ),
-	  IconButton(
-  	    icon: const Icon(Icons.bar_chart),
-  	    onPressed: openAccumulatorSummary,
-	  ),
-	  IconButton(
-  	    icon: const Icon(Icons.check_circle_outline),
-            onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => ManualSettlementScreen(teamId: widget.teamId)),
-    	      );
-              load();
-            },
-	  ),
-	  IconButton(
-  	    icon: const Icon(Icons.live_tv),
-  	    onPressed: openLiveView,
-	  ),
-        ],
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: load,

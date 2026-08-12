@@ -90,12 +90,23 @@ class AppUser {
   }
 }
 
+enum MemberRole { manager, squadMember }
+
+extension MemberRoleValue on MemberRole {
+  String get value => this == MemberRole.manager ? 'manager' : 'squad_member';
+
+  static MemberRole fromValue(String? value) {
+    return value == 'manager' ? MemberRole.manager : MemberRole.squadMember;
+  }
+}
+
 class Member {
   final String? id;
   final String userId;
   final String displayName;
   final String teamId;
   final DateTime joinedAt;
+  final MemberRole role;
 
   Member({
     this.id,
@@ -103,6 +114,7 @@ class Member {
     required this.displayName,
     required this.teamId,
     required this.joinedAt,
+    this.role = MemberRole.squadMember,
   });
 
   factory Member.fromMap(String id, Map<String, dynamic> map) {
@@ -112,6 +124,7 @@ class Member {
       displayName: map['displayName'],
       teamId: map['teamId'],
       joinedAt: map['joinedAt'].toDate(),
+      role: MemberRoleValue.fromValue(map['role']),
     );
   }
 
@@ -121,6 +134,7 @@ class Member {
       'displayName': displayName,
       'teamId': teamId,
       'joinedAt': joinedAt,
+      'role': role.value,
     };
   }
 }
@@ -134,6 +148,7 @@ class GameWeek {
   final bool isSettled;
   final String? selectedBookmaker;
   final double? combinedOdds;
+  final bool isLocked;
 
   GameWeek({
     this.id,
@@ -144,6 +159,7 @@ class GameWeek {
     required this.isSettled,
     this.selectedBookmaker,
     this.combinedOdds,
+    this.isLocked = false,
   });
 
   factory GameWeek.fromMap(String id, Map<String, dynamic> map) {
@@ -156,6 +172,7 @@ class GameWeek {
       isSettled: map['isSettled'],
       selectedBookmaker: map['selectedBookmaker'],
       combinedOdds: (map['combinedOdds'] as num?)?.toDouble(),
+      isLocked: map['isLocked'] ?? false,
     );
   }
 
@@ -168,6 +185,7 @@ class GameWeek {
       'isSettled': isSettled,
       'selectedBookmaker': selectedBookmaker,
       'combinedOdds': combinedOdds,
+      'isLocked': isLocked,
     };
   }
 }

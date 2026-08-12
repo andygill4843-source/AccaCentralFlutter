@@ -131,6 +131,7 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
         displayName: widget.appState.currentUser?.displayName ?? 'Player',
         teamId: team.id ?? '',
         joinedAt: DateTime.now(),
+        role: mode == TeamSetupMode.create ? MemberRole.manager : MemberRole.squadMember,
       );
       await FirestoreService.instance.addMember(member);
 
