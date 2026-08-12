@@ -134,45 +134,54 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
 
     final action = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: Text('Go to ${option.bookmaker}?'),
+        title: const Text('Bookmaker selected'),
         content: Text(
           links.isEmpty
-              ? "No direct betslip links are available for ${option.bookmaker} on these legs. "
-                  "You can still copy or share the leg list below to place the bets manually."
-              : 'Would you like to be transferred to the ${option.bookmaker} website? '
-                  "All ${links.length} leg${links.length == 1 ? '' : 's'} of the accumulator will open there — "
-                  'please double-check the betslip is complete before staking anything, '
-                  "as this depends on ${option.bookmaker}'s own website behaviour.",
+              ? "No direct betslip links are available for ${option.bookmaker} on these legs, so transfer isn't available — you can remain on the app or return to pick a different bookmaker."
+              : 'You can transfer to ${option.bookmaker} with all legs opened there, or remain on the app with the odds locked in.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, 'cancel'), child: const Text('Not now')),
-          TextButton(onPressed: () => Navigator.pop(context, 'whatsapp'), child: const Text('Share on WhatsApp')),
-          TextButton(onPressed: () => Navigator.pop(context, 'copy'), child: const Text('Copy leg list')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'return'),
+            child: const Text('Return'),
+          ),
           if (links.isNotEmpty)
-            TextButton(onPressed: () => Navigator.pop(context, 'transfer'), child: const Text('Transfer me')),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'transfer'),
+              child: Text('Transfer to ${option.bookmaker}'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'remain'),
+            child: const Text('Remain on the app'),
+          ),
         ],
       ),
     );
 
     switch (action) {
+      case 'return':
+        // Undo the lock entirely — back to an unlocked state, no bookmaker selected.
+        if (widget.gameWeek.id != null) {
+          await FirestoreService.instance.unlockGameWeek(widget.gameWeek.id!);
+        }
+        setState(() {
+          selectedBookmaker = null;
+          combinedOdds = null;
+          isLocked = false;
+        });
+        break;
       case 'transfer':
         for (final pair in links) {
           final url = Uri.parse(pair.$2!);
           await launchUrl(url, mode: LaunchMode.externalApplication);
-          // Small pause between opens so the bookmaker's site has a moment
-          // to register each selection before the next one loads, on
-          // bookmakers where that matters.
           await Future.delayed(const Duration(milliseconds: 800));
         }
         break;
-      case 'copy':
-        await copyLegList(option);
-        break;
-      case 'whatsapp':
-        await shareViaWhatsApp(option);
-        break;
+      case 'remain':
       default:
+        // Odds stay locked, just close the dialog — no action needed.
         break;
     }
   }
@@ -216,6 +225,14 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         );
       }
     }
+  }
+
+  _BookmakerOption _currentLockedOption() {
+    return _BookmakerOption(
+      bookmaker: selectedBookmaker!,
+      combinedOdds: combinedOdds ?? 0,
+      legLinks: legs.map((l) => (l, (l.bookmakerLinks ?? {})[selectedBookmaker])).toList(),
+    );
   }
 
   @override
@@ -272,18 +289,66 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                           ),
                           const SizedBox(height: 16),
                         ],
-                        const Text('Compare bookmakers', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                        const SizedBox(height: 8),
-                        if (bookmakerOptions.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 12),
-                            child: Text(
-                              'No single bookmaker covers every leg of this accumulator — legs may need placing across multiple bookmakers.',
-                              style: TextStyle(fontSize: 13),
-                            ),
-                          )
-                        else
-                          for (final option in bookmakerOptions) _bookmakerCard(option),
+                        if (!isLocked) ...[
+                          if (!isLocked) ...[
+                          const Text('Compare bookmakers', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          const SizedBox(height: 8),
+                          if (bookmakerOptions.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 12),
+                              child: Text(
+                                'No single bookmaker covers every leg of this accumulator — legs may need placing across multiple bookmakers.',
+                                style: TextStyle(fontSize: 13),
+                              ),
+                            )
+                          else
+                            for (final option in bookmakerOptions) _bookmakerCard(option),
+                        ],
+                        if (isLocked && selectedBookmaker != null) ...[
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => copyLegList(_currentLockedOption()),
+                                  icon: const Icon(Icons.copy),
+                                  label: const Text('Copy legs'),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => shareViaWhatsApp(_currentLockedOption()),
+                                  icon: const Icon(Icons.share),
+                                  label: const Text('Share on WhatsApp'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                        ],
+                        if (isLocked && selectedBookmaker != null) ...[
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => copyLegList(_currentLockedOption()),
+                                  icon: const Icon(Icons.copy),
+                                  label: const Text('Copy legs'),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => shareViaWhatsApp(_currentLockedOption()),
+                                  icon: const Icon(Icons.share),
+                                  label: const Text('Share on WhatsApp'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
     );

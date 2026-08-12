@@ -64,8 +64,6 @@ class FirestoreService {
     final gameWeekRef = _db.collection('gameWeeks').doc(gameWeekId);
 
     await _db.runTransaction((transaction) async {
-      // Freeze every leg's odds to this specific bookmaker's price —
-      // this is what actually locks in the weighted points.
       for (final leg in legs) {
         if (leg.id == null) continue;
         final price = (leg.bookmakerPrices ?? {})[bookmaker];
@@ -74,6 +72,8 @@ class FirestoreService {
         transaction.update(legRef, {
           'decimalOddsAtSelection': price,
           'bookmaker': bookmaker,
+          'preLockOddsAtSelection': leg.decimalOddsAtSelection,
+          'preLockBookmaker': leg.bookmaker,
         });
       }
 
@@ -82,6 +82,32 @@ class FirestoreService {
         'combinedOdds': combinedOdds,
         'isLocked': true,
       });
+    });
+  }
+
+  Future<void> unlockGameWeek(String gameWeekId) async {
+    final gameWeekRef = _db.collection('gameWeeks').doc(gameWeekId);
+
+    await _db.runTransaction((transaction) async {
+      final legsSnap = await _db.collection('legs').where('gameWeekId', isEqualTo: gameWeekId).get();
+
+      transaction.update(gameWeekRef, {
+        'selectedBookmaker': null,
+        'combinedOdds': null,
+        'isLocked': false,
+      });
+
+      for (final doc in legsSnap.docs) {
+        final data = doc.data();
+        final preLockOdds = data['preLockOddsAtSelection'];
+        final preLockBookmaker = data['preLockBookmaker'];
+        if (preLockOdds != null && preLockBookmaker != null) {
+          transaction.update(doc.reference, {
+            'decimalOddsAtSelection': preLockOdds,
+            'bookmaker': preLockBookmaker,
+          });
+        }
+      }
     });
   }
 

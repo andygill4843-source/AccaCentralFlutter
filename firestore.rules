@@ -98,7 +98,7 @@ service cloud.firestore {
 	&& !isGameWeekLocked(request.resource.data.gameWeekId);
 
       allow update: if isTeamManager(resource.data.teamId)
-    	&& request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outcome', 	'decimalOddsAtSelection', 'bookmaker']);
+    	&& request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outcome', 'decimalOddsAtSelection', 'bookmaker', 'preLockOddsAtSelection', 'preLockBookmaker']);
       allow delete: if isSignedIn()
     	&& resource.data.outcome == 'pending'
     	&& (ownsMemberDoc(resource.data.memberId) || isTeamManager(resource.data.teamId))

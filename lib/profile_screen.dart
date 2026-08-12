@@ -4,6 +4,7 @@ import 'firestore_service.dart';
 import 'models.dart';
 import 'main.dart'; // for AccaColors
 import 'manage_team_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ProfileScreen extends StatefulWidget {
   final AppState appState;
@@ -38,6 +39,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
   }
 
+  Future<void> shareInviteCode() async {
+    if (team == null) return;
+    final text = 'Join my team "${team!.name}" on Acca Central — use invite code: ${team!.inviteCode}';
+    final encoded = Uri.encodeComponent(text);
+    final uri = Uri.parse('https://wa.me/?text=$encoded');
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't open WhatsApp — is it installed?")),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = widget.appState.currentUser;
@@ -65,6 +82,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     member?.role == MemberRole.manager ? 'Manager' : 'Squad member',
                   ),
                   const SizedBox(height: 32),
+                  OutlinedButton.icon(
+                    onPressed: shareInviteCode,
+                    icon: const Icon(Icons.share),
+                    label: const Text('Share team invite code'),
+                  ),
+                  const SizedBox(height: 12),
                   if (member?.role == MemberRole.manager) ...[
                     OutlinedButton.icon(
                       onPressed: () {
