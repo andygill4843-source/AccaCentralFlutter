@@ -234,8 +234,6 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
   }
 
   Widget _gameWeekStatusCard() {
-    // Manager-only fields (coverage, deadline) are hidden for squad members —
-    // per your request, non-managers only see whether a gameweek is active.
     if (activeGameWeek == null) {
       return Card(
         child: Padding(
@@ -257,14 +255,10 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
               const SizedBox(height: 4),
               const Text('Locked', style: TextStyle(color: AccaColors.gold, fontSize: 13)),
             ],
-            if (isManager) ...[
-              const SizedBox(height: 8),
-              Text('Coverage: $legCount/$memberCount picked', style: const TextStyle(color: Colors.white70, fontSize: 13)),
-              const SizedBox(height: 2),
-              // NOTE: no dedicated deadline field exists yet — using the
-              // gameweek's end date as a stand-in until that field is built.
-              Text('Deadline: ${_formatDate(activeGameWeek!.endDate)}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
-            ],
+            const SizedBox(height: 8),
+            Text('Coverage: $legCount/$memberCount picked', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 2),
+            Text('Deadline: ${_formatDate(activeGameWeek!.deadline)}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
           ],
         ),
       ),

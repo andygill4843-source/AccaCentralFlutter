@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'app_state.dart';
 import 'firestore_service.dart';
 import 'models.dart';
+import 'scoring_engine.dart';
 import 'main.dart'; // for AccaColors
 
 class GameWeekSetupScreen extends StatefulWidget {
@@ -17,14 +18,24 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
   int weekNumber = 1;
   DateTime startDate = DateTime.now();
   DateTime endDate = DateTime.now().add(const Duration(days: 3));
+  DateTime deadline = DateTime.now().add(const Duration(days: 3));
 
   bool isLoading = false;
   String? errorMessage;
+  String? currentSeason;
 
   @override
   void initState() {
     super.initState();
     suggestNextWeekNumber();
+    loadCurrentSeason();
+  }
+
+  Future<void> loadCurrentSeason() async {
+    final teamId = widget.appState.currentUser?.teamIds.first;
+    if (teamId == null) return;
+    final team = await FirestoreService.instance.fetchTeam(teamId);
+    if (mounted) setState(() => currentSeason = team?.season);
   }
 
   Future<void> suggestNextWeekNumber() async {
@@ -38,8 +49,8 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     }
   }
 
-  Future<void> pickDate({required bool isStart}) async {
-    final initial = isStart ? startDate : endDate;
+  Future<void> pickDateField(DateTime Function() getter, void Function(DateTime) setter) async {
+    final initial = getter();
     final date = await showDatePicker(
       context: context,
       initialDate: initial,
@@ -55,13 +66,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     if (time == null) return;
 
     final combined = DateTime(date.year, date.month, date.day, time.hour, time.minute);
-    setState(() {
-      if (isStart) {
-        startDate = combined;
-      } else {
-        endDate = combined;
-      }
-    });
+    setState(() => setter(combined));
   }
 
   Future<void> create() async {
@@ -69,7 +74,11 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     if (teamId == null) return;
 
     if (!endDate.isAfter(startDate)) {
-      setState(() => errorMessage = 'Deadline must be after the first kickoff.');
+      setState(() => errorMessage = 'The last match window must end after the first kickoff.');
+      return;
+    }
+    if (deadline.isAfter(endDate)) {
+      setState(() => errorMessage = 'Selection deadline must not be after the last match window ends.');
       return;
     }
     if (startDate.isAfter(DateTime.now().add(const Duration(days: 14)))) {
@@ -83,6 +92,15 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     });
 
     try {
+      final existing = await FirestoreService.instance.fetchGameWeeks(teamId);
+      if (existing.any((g) => !g.isSettled)) {
+        setState(() {
+          isLoading = false;
+          errorMessage = "There's already an active gameweek. End it before creating a new one.";
+        });
+        return;
+      }
+
       final gameWeek = GameWeek(
         id: null,
         teamId: teamId,
@@ -91,6 +109,8 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         endDate: endDate,
         isSettled: false,
         createdAt: DateTime.now(),
+        deadline: deadline,
+        season: (await FirestoreService.instance.fetchTeam(teamId))?.season ?? '2026-27',
       );
       await FirestoreService.instance.createGameWeek(gameWeek);
 
@@ -98,8 +118,83 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     } catch (e) {
       setState(() {
         isLoading = false;
-        errorMessage = e.toString().replaceFirst('Exception: ', '');
+        errorMessage = e.toString();
       });
+    }
+  }
+
+  Future<void> endSeason() async {
+    final userId = widget.appState.currentUser?.id;
+    if (userId == null) return;
+    final teamId = widget.appState.currentUser!.teamIds.first;
+
+    final team = await FirestoreService.instance.fetchTeam(teamId);
+    if (team == null || !mounted) return;
+
+    final members = await FirestoreService.instance.fetchMembers(teamId);
+    final legs = await FirestoreService.instance.fetchLegs(teamId);
+    final gameWeeks = await FirestoreService.instance.fetchGameWeeks(teamId);
+    final currentSeasonGameWeekIds = gameWeeks.where((g) => g.season == team.season).map((g) => g.id).toSet();
+    final currentSeasonLegs = legs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
+    final table = ScoringEngine.buildLeagueTable(members: members, legs: currentSeasonLegs);
+
+    if (!mounted) return;
+    if (table.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No league table data yet — nothing to crown a winner from.')),
+      );
+      return;
+    }
+    final winner = table.first;
+
+    final newSeasonController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Are you sure you want to end the season?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${winner.displayName} will be crowned champion of ${team.season} with ${winner.totalBasePoints} points.'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: newSeasonController,
+              decoration: const InputDecoration(labelText: 'New season name (required)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () {
+              if (newSeasonController.text.trim().isEmpty) return;
+              Navigator.pop(context, true);
+            },
+            child: const Text('End season'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || newSeasonController.text.trim().isEmpty) return;
+
+    try {
+      await FirestoreService.instance.endSeason(
+        teamId: teamId,
+        currentSeason: team.season,
+        newSeason: newSeasonController.text.trim(),
+        winner: winner,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${winner.displayName} crowned champion of ${team.season}!')),
+        );
+        loadCurrentSeason();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error ending season: ${e.toString()}')));
+      }
     }
   }
 
@@ -111,16 +206,38 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('New Gameweek'),
+        title: const Text('Gameweek Manager'),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
       ),
       backgroundColor: AccaColors.background,
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Current season', style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
+                        Text(currentSeason ?? '—', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    OutlinedButton(
+                      onPressed: endSeason,
+                      child: const Text('Start new season'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -144,14 +261,21 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
               tileColor: Colors.white,
               title: const Text('First kickoff'),
               subtitle: Text(formatDateTime(startDate)),
-              onTap: () => pickDate(isStart: true),
+              onTap: () => pickDateField(() => startDate, (d) => startDate = d),
             ),
             const SizedBox(height: 8),
             ListTile(
               tileColor: Colors.white,
-              title: const Text('Deadline / last match'),
+              title: const Text('Last match window ends'),
               subtitle: Text(formatDateTime(endDate)),
-              onTap: () => pickDate(isStart: false),
+              onTap: () => pickDateField(() => endDate, (d) => endDate = d),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              tileColor: Colors.white,
+              title: const Text('Selection deadline'),
+              subtitle: Text(formatDateTime(deadline)),
+              onTap: () => pickDateField(() => deadline, (d) => deadline = d),
             ),
             if (errorMessage != null) ...[
               const SizedBox(height: 16),

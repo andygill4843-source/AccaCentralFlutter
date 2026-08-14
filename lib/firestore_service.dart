@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'models.dart';
 import 'package:uuid/uuid.dart';
+import 'scoring_engine.dart'; // for LeagueTableEntry
 
 class FirestoreService {
   static final FirestoreService instance = FirestoreService._();
@@ -18,6 +19,10 @@ class FirestoreService {
 
   Future<void> deleteLeg(String legId) async {
     await _db.collection('legs').doc(legId).delete();
+  }
+
+  Future<void> setTeamSeason({required String teamId, required String season}) async {
+    await _db.collection('teams').doc(teamId).update({'season': season});
   }
 
   Future<Team?> fetchTeam(String teamId) async {
@@ -118,6 +123,40 @@ class FirestoreService {
         .orderBy('weekNumber')
         .get();
     return snapshot.docs.map((doc) => GameWeek.fromMap(doc.id, doc.data())).toList();
+  }
+
+  Future<List<SeasonWinner>> fetchSeasonWinners(String teamId) async {
+    final snapshot = await _db
+        .collection('seasonWinners')
+        .where('teamId', isEqualTo: teamId)
+        .orderBy('endedAt', descending: true)
+        .get();
+    return snapshot.docs.map((doc) => SeasonWinner.fromMap(doc.id, doc.data())).toList();
+  }
+
+  /// Archives the current season's winner, then advances the team to a new
+  /// season string. Existing gameweeks/legs are untouched — they permanently
+  /// keep the season they were created under, which is what makes filtering
+  /// "this season only" possible later.
+  Future<void> endSeason({
+    required String teamId,
+    required String currentSeason,
+    required String newSeason,
+    required LeagueTableEntry winner,
+  }) async {
+    final teamRef = _db.collection('teams').doc(teamId);
+
+    await _db.collection('seasonWinners').add(SeasonWinner(
+          teamId: teamId,
+          season: currentSeason,
+          winnerMemberId: winner.memberId,
+          winnerDisplayName: winner.displayName,
+          totalBasePoints: winner.totalBasePoints,
+          totalWeightedPoints: winner.totalWeightedPoints,
+          endedAt: DateTime.now(),
+        ).toMap());
+
+    await teamRef.update({'season': newSeason});
   }
 
   Future<GameWeek?> fetchActiveGameWeek(String teamId) async {

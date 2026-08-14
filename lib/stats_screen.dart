@@ -17,6 +17,7 @@ class _StatsScreenState extends State<StatsScreen> {
   List<LeagueTableEntry> entries = [];
   List<MemberStats> memberStats = [];
   List<(BetType, int)> betTypeCounts = [];
+  List<SeasonWinner> pastChampions = [];
   bool isLoading = true;
   String? errorMessage;
 
@@ -28,13 +29,25 @@ class _StatsScreenState extends State<StatsScreen> {
 
   Future<void> load() async {
     try {
+      final team = await FirestoreService.instance.fetchTeam(widget.teamId);
       final members = await FirestoreService.instance.fetchMembers(widget.teamId);
       final legs = await FirestoreService.instance.fetchLegs(widget.teamId);
       final gameWeeks = await FirestoreService.instance.fetchGameWeeks(widget.teamId);
+
+      final currentSeasonGameWeekIds = gameWeeks
+          .where((g) => g.season == team?.season)
+          .map((g) => g.id)
+          .toSet();
+      final currentSeasonLegs = legs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
+      final currentSeasonGameWeeks = gameWeeks.where((g) => g.season == team?.season).toList();
+
+      final champions = await FirestoreService.instance.fetchSeasonWinners(widget.teamId);
+
       setState(() {
-        entries = ScoringEngine.buildLeagueTable(members: members, legs: legs);
-        memberStats = MemberStatsEngine.buildMemberStats(members: members, legs: legs, gameWeeks: gameWeeks);
-        betTypeCounts = ScoringEngine.betTypePopularity(legs);
+        entries = ScoringEngine.buildLeagueTable(members: members, legs: currentSeasonLegs);
+        memberStats = MemberStatsEngine.buildMemberStats(members: members, legs: currentSeasonLegs, gameWeeks: currentSeasonGameWeeks);
+        betTypeCounts = ScoringEngine.betTypePopularity(currentSeasonLegs);
+        pastChampions = champions;
         isLoading = false;
       });
     } catch (e) {
@@ -115,6 +128,19 @@ class _StatsScreenState extends State<StatsScreen> {
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
+                      _sectionHeader('Past champions'),
+                      if (pastChampions.isEmpty)
+                        _emptyNote('No completed seasons yet.')
+                      else
+                        for (final champion in pastChampions)
+                          ListTile(
+                            leading: const Icon(Icons.emoji_events, color: AccaColors.gold),
+                            title: Text(champion.winnerDisplayName),
+                            subtitle: Text(champion.season),
+                            trailing: Text('${champion.totalBasePoints} pts', style: TextStyle(color: AccaColors.textSecondary)),
+                          ),
+                      const SizedBox(height: 20),
+
                       _sectionHeader('Current streaks'),
                       if (currentStreakLeaders.isEmpty)
                         _emptyNote('No active streaks yet.')

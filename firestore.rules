@@ -42,6 +42,12 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /seasonWinners/{winnerId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+      allow create: if isTeamManager(request.resource.data.teamId);
+      allow update, delete: if false;
+    }
+
     match /usernames/{username} {
       allow read: if true;
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;

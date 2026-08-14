@@ -16,6 +16,7 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
   List<LeagueTableEntry> entries = [];
   bool isLoading = true;
   String? errorMessage;
+  String? currentSeason;
 
   @override
   void initState() {
@@ -25,10 +26,21 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
 
   Future<void> load() async {
     try {
+      final team = await FirestoreService.instance.fetchTeam(widget.teamId);
+      currentSeason = team?.season;
+
       final members = await FirestoreService.instance.fetchMembers(widget.teamId);
       final legs = await FirestoreService.instance.fetchLegs(widget.teamId);
+      final gameWeeks = await FirestoreService.instance.fetchGameWeeks(widget.teamId);
+
+      final currentSeasonGameWeekIds = gameWeeks
+          .where((g) => g.season == team?.season)
+          .map((g) => g.id)
+          .toSet();
+      final currentSeasonLegs = legs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
+
       setState(() {
-        entries = ScoringEngine.buildLeagueTable(members: members, legs: legs);
+        entries = ScoringEngine.buildLeagueTable(members: members, legs: currentSeasonLegs);
         isLoading = false;
       });
     } catch (e) {
@@ -43,11 +55,10 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('League table'),
+        title: Text(currentSeason != null ? 'League table — $currentSeason' : 'League table'),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
       ),
-      backgroundColor: AccaColors.background,
       body: RefreshIndicator(
         onRefresh: load,
         child: isLoading
@@ -75,13 +86,22 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
                               ),
                             ),
                             title: Text(entry.displayName, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
-                            subtitle: Text('${entry.legsWon}/${entry.legsPlayed} legs won', style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
+                            subtitle: Text(
+                              '${entry.legsWon}/${entry.legsPlayed} legs won',
+                              style: TextStyle(fontSize: 12, color: AccaColors.textSecondary),
+                            ),
                             trailing: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                Text('${entry.totalBasePoints} pts', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AccaColors.primary)),
-                                Text('${entry.totalWeightedPoints.toStringAsFixed(1)} weighted', style: TextStyle(fontSize: 11, color: AccaColors.textSecondary)),
+                                Text(
+                                  '${entry.totalBasePoints} pts',
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AccaColors.primary),
+                                ),
+                                Text(
+                                  '${entry.totalWeightedPoints.toStringAsFixed(1)} weighted',
+                                  style: TextStyle(fontSize: 11, color: AccaColors.textSecondary),
+                                ),
                               ],
                             ),
                           );

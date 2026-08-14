@@ -45,7 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           hasActiveGameWeek = gameWeek != null;
           nextWeekNumber = gameWeek?.weekNumber;
-          nextDeadline = gameWeek?.endDate;
+          nextDeadline = gameWeek?.deadline;
           topThree = table.take(3).toList();
           isLoading = false;
         });

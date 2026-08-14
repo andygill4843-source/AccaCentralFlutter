@@ -150,6 +150,8 @@ class GameWeek {
   final double? combinedOdds;
   final bool isLocked;
   final DateTime createdAt;
+  final DateTime deadline;
+  final String season;
 
   GameWeek({
     this.id,
@@ -162,7 +164,10 @@ class GameWeek {
     this.combinedOdds,
     this.isLocked = false,
     DateTime? createdAt,
-  }) : createdAt = createdAt ?? startDate; // fallback keeps older gameweeks from crashing pick-time stats
+    DateTime? deadline,
+    required this.season,
+  })  : createdAt = createdAt ?? startDate,
+        deadline = deadline ?? startDate; // fallback for older gameweeks without a real deadline set
 
   factory GameWeek.fromMap(String id, Map<String, dynamic> map) {
     return GameWeek(
@@ -176,6 +181,8 @@ class GameWeek {
       combinedOdds: (map['combinedOdds'] as num?)?.toDouble(),
       isLocked: map['isLocked'] ?? false,
       createdAt: (map['createdAt'] as dynamic)?.toDate(),
+      deadline: (map['deadline'] as dynamic)?.toDate(),
+      season: map['season'] ?? 'Unknown Season',
     );
   }
 
@@ -189,6 +196,8 @@ class GameWeek {
       'selectedBookmaker': selectedBookmaker,
       'combinedOdds': combinedOdds,
       'isLocked': isLocked,
+      'deadline': deadline,
+      'season': season,
     };
   }
 }
@@ -342,6 +351,52 @@ class AccumulatorLeg {
       'sportmonksFixtureId': sportmonksFixtureId,
       'outcome': outcome.value,
       'submittedAt': submittedAt,
+    };
+   }
+  }
+  class SeasonWinner {
+  final String? id;
+  final String teamId;
+  final String season;
+  final String winnerMemberId;
+  final String winnerDisplayName;
+  final int totalBasePoints;
+  final double totalWeightedPoints;
+  final DateTime endedAt;
+
+  SeasonWinner({
+    this.id,
+    required this.teamId,
+    required this.season,
+    required this.winnerMemberId,
+    required this.winnerDisplayName,
+    required this.totalBasePoints,
+    required this.totalWeightedPoints,
+    required this.endedAt,
+  });
+
+  factory SeasonWinner.fromMap(String id, Map<String, dynamic> map) {
+    return SeasonWinner(
+      id: id,
+      teamId: map['teamId'],
+      season: map['season'],
+      winnerMemberId: map['winnerMemberId'],
+      winnerDisplayName: map['winnerDisplayName'],
+      totalBasePoints: map['totalBasePoints'],
+      totalWeightedPoints: (map['totalWeightedPoints'] as num).toDouble(),
+      endedAt: map['endedAt'].toDate(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'teamId': teamId,
+      'season': season,
+      'winnerMemberId': winnerMemberId,
+      'winnerDisplayName': winnerDisplayName,
+      'totalBasePoints': totalBasePoints,
+      'totalWeightedPoints': totalWeightedPoints,
+      'endedAt': endedAt,
     };
   }
 }
