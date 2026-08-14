@@ -14,6 +14,10 @@ import 'live_accumulator_screen.dart';
 import 'current_leg_screen.dart';
 import 'profile_screen.dart';
 import 'models.dart';
+import 'stats_screen.dart';
+import 'awards_screen.dart';
+import 'main_tab_scaffold.dart';
+import 'splash_screen.dart';
 
 
 void main() async {
@@ -67,20 +71,19 @@ class _RootScreenState extends State<RootScreen> {
   void initState() {
     super.initState();
     appState.addListener(() => setState(() {}));
-    appState.resolveAuthState();
   }
 
   @override
   Widget build(BuildContext context) {
     switch (appState.screen) {
       case AppScreen.splash:
-        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        return SplashScreen(appState: appState);
       case AppScreen.auth:
         return AuthScreen(appState: appState, onAuthenticated: () {});
       case AppScreen.teamSetup:
   	return TeamSetupScreen(appState: appState, onTeamReady: () {});
       case AppScreen.main:
-  	return LeagueTableScreen(teamId: appState.currentUser?.teamIds.first ?? '', appState: appState);
+  return MainTabScaffold(appState: appState, teamId: appState.currentUser?.teamIds.first ?? '');
     }
   }
 }
@@ -324,6 +327,24 @@ class _LeagueTableScreenState extends State<LeagueTableScreen> {
                 onPressed: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => ProfileScreen(appState: widget.appState, teamId: widget.teamId)),
+                  );
+                },
+              ),
+	      IconButton(
+                icon: const Icon(Icons.bar_chart_outlined, color: Colors.white),
+                tooltip: 'Stats',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => StatsScreen(teamId: widget.teamId)),
+                  );
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.emoji_events, color: Colors.white),
+                tooltip: 'Awards',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => AwardsScreen(appState: widget.appState, teamId: widget.teamId)),
                   );
                 },
               ),

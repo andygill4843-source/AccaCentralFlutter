@@ -149,6 +149,7 @@ class GameWeek {
   final String? selectedBookmaker;
   final double? combinedOdds;
   final bool isLocked;
+  final DateTime createdAt;
 
   GameWeek({
     this.id,
@@ -160,7 +161,8 @@ class GameWeek {
     this.selectedBookmaker,
     this.combinedOdds,
     this.isLocked = false,
-  });
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? startDate; // fallback keeps older gameweeks from crashing pick-time stats
 
   factory GameWeek.fromMap(String id, Map<String, dynamic> map) {
     return GameWeek(
@@ -173,6 +175,7 @@ class GameWeek {
       selectedBookmaker: map['selectedBookmaker'],
       combinedOdds: (map['combinedOdds'] as num?)?.toDouble(),
       isLocked: map['isLocked'] ?? false,
+      createdAt: (map['createdAt'] as dynamic)?.toDate(),
     );
   }
 

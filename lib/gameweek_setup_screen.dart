@@ -90,6 +90,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         startDate: startDate,
         endDate: endDate,
         isSettled: false,
+        createdAt: DateTime.now(),
       );
       await FirestoreService.instance.createGameWeek(gameWeek);
 
