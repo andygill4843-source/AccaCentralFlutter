@@ -14,10 +14,21 @@ class StatsScreen extends StatefulWidget {
 }
 
 class _StatsScreenState extends State<StatsScreen> {
+  // Raw data, fetched once — filtering by season happens locally, no refetch.
+  List<Member> rawMembers = [];
+  List<AccumulatorLeg> rawLegs = [];
+  List<GameWeek> rawGameWeeks = [];
+  List<SeasonWinner> rawSeasonWinners = [];
+  String? teamCurrentSeason;
+
+  // Derived, recomputed whenever selectedSeason changes.
   List<LeagueTableEntry> entries = [];
   List<MemberStats> memberStats = [];
   List<(BetType, int)> betTypeCounts = [];
-  List<SeasonWinner> pastChampions = [];
+  List<String> allSeasons = [];
+  String? selectedSeason;
+  SeasonWinner? seasonChampion;
+
   bool isLoading = true;
   String? errorMessage;
 
@@ -28,34 +39,69 @@ class _StatsScreenState extends State<StatsScreen> {
   }
 
   Future<void> load() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
     try {
       final team = await FirestoreService.instance.fetchTeam(widget.teamId);
       final members = await FirestoreService.instance.fetchMembers(widget.teamId);
       final legs = await FirestoreService.instance.fetchLegs(widget.teamId);
       final gameWeeks = await FirestoreService.instance.fetchGameWeeks(widget.teamId);
+      final seasonWinners = await FirestoreService.instance.fetchSeasonWinners(widget.teamId);
 
-      final currentSeasonGameWeekIds = gameWeeks
-          .where((g) => g.season == team?.season)
-          .map((g) => g.id)
-          .toSet();
-      final currentSeasonLegs = legs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
-      final currentSeasonGameWeeks = gameWeeks.where((g) => g.season == team?.season).toList();
+      rawMembers = members;
+      rawLegs = legs;
+      rawGameWeeks = gameWeeks;
+      rawSeasonWinners = seasonWinners;
+      teamCurrentSeason = team?.season;
 
-      final champions = await FirestoreService.instance.fetchSeasonWinners(widget.teamId);
+      selectedSeason ??= teamCurrentSeason;
 
-      setState(() {
-        entries = ScoringEngine.buildLeagueTable(members: members, legs: currentSeasonLegs);
-        memberStats = MemberStatsEngine.buildMemberStats(members: members, legs: currentSeasonLegs, gameWeeks: currentSeasonGameWeeks);
-        betTypeCounts = ScoringEngine.betTypePopularity(currentSeasonLegs);
-        pastChampions = champions;
-        isLoading = false;
-      });
+      recompute();
+
+      setState(() => isLoading = false);
     } catch (e) {
       setState(() {
         errorMessage = e.toString();
         isLoading = false;
       });
     }
+  }
+
+  void recompute() {
+    final seasonsFromGameWeeks = rawGameWeeks.map((g) => g.season).toSet();
+    final seasonsFromWinners = rawSeasonWinners.map((w) => w.season).toSet();
+    final combined = <String>{
+      ...seasonsFromGameWeeks,
+      ...seasonsFromWinners,
+      if (teamCurrentSeason != null) teamCurrentSeason!,
+    }..removeWhere((s) => s.isEmpty);
+    allSeasons = combined.toList()..sort((a, b) => b.compareTo(a)); // most recent first
+
+    final season = selectedSeason;
+    final seasonGameWeekIds = rawGameWeeks.where((g) => g.season == season).map((g) => g.id).toSet();
+    final seasonLegs = rawLegs.where((l) => seasonGameWeekIds.contains(l.gameWeekId)).toList();
+    final seasonGameWeeks = rawGameWeeks.where((g) => g.season == season).toList();
+
+    entries = ScoringEngine.buildLeagueTable(members: rawMembers, legs: seasonLegs);
+    memberStats = MemberStatsEngine.buildMemberStats(members: rawMembers, legs: seasonLegs, gameWeeks: seasonGameWeeks);
+    betTypeCounts = ScoringEngine.betTypePopularity(seasonLegs);
+
+    if (season == teamCurrentSeason) {
+      seasonChampion = null; // shown as "To be confirmed"
+    } else {
+      final match = rawSeasonWinners.where((w) => w.season == season);
+      seasonChampion = match.isNotEmpty ? match.first : null; // null here means genuinely not recorded
+    }
+  }
+
+  void onSeasonChanged(String? newSeason) {
+    if (newSeason == null) return;
+    setState(() {
+      selectedSeason = newSeason;
+      recompute();
+    });
   }
 
   List<LeagueTableEntry> get currentStreakLeaders =>
@@ -128,17 +174,47 @@ class _StatsScreenState extends State<StatsScreen> {
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
-                      _sectionHeader('Past champions'),
-                      if (pastChampions.isEmpty)
-                        _emptyNote('No completed seasons yet.')
-                      else
-                        for (final champion in pastChampions)
-                          ListTile(
-                            leading: const Icon(Icons.emoji_events, color: AccaColors.gold),
-                            title: Text(champion.winnerDisplayName),
-                            subtitle: Text(champion.season),
-                            trailing: Text('${champion.totalBasePoints} pts', style: TextStyle(color: AccaColors.textSecondary)),
+                      if (allSeasons.isNotEmpty)
+                        DropdownButtonFormField<String>(
+                          value: selectedSeason,
+                          decoration: const InputDecoration(
+                            labelText: 'Season',
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(),
                           ),
+                          items: allSeasons
+                              .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                              .toList(),
+                          onChanged: onSeasonChanged,
+                        ),
+                      const SizedBox(height: 16),
+
+                      _sectionHeader('Season champion'),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: selectedSeason == teamCurrentSeason
+                              ? const Text('To be confirmed', style: TextStyle(fontSize: 14, fontStyle: FontStyle.italic))
+                              : seasonChampion != null
+                                  ? Row(
+                                      children: [
+                                        const Icon(Icons.emoji_events, color: AccaColors.gold),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(seasonChampion!.winnerDisplayName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                              Text('${seasonChampion!.totalBasePoints} pts', style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : const Text('Not recorded', style: TextStyle(fontSize: 14)),
+                        ),
+                      ),
                       const SizedBox(height: 20),
 
                       _sectionHeader('Current streaks'),
@@ -148,7 +224,7 @@ class _StatsScreenState extends State<StatsScreen> {
                         for (final e in currentStreakLeaders) _streakRow(e),
                       const SizedBox(height: 20),
 
-                      _sectionHeader('Longest win streaks (all time)'),
+                      _sectionHeader('Longest win streaks'),
                       if (longestStreakLeaders.isEmpty)
                         _emptyNote("Nobody's won a leg yet.")
                       else

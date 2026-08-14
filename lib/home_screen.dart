@@ -136,38 +136,49 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 20),
                 Row(
-                  children: [
-                    Expanded(
-                      child: _navButton(icon: Icons.sports_soccer, label: 'Acca Hub', onTap: () => widget.onNavigateToTab(1)),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _navButton(icon: Icons.bar_chart, label: 'Stats', onTap: () => widget.onNavigateToTab(3)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _navButton(icon: Icons.military_tech, label: 'Awards', onTap: () => widget.onNavigateToTab(4)),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _navButton(
-                        icon: Icons.person,
-                        label: 'Profile',
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => ProfileScreen(appState: widget.appState, teamId: widget.teamId)),
+                      children: [
+                        Expanded(
+                          child: _navButton(icon: Icons.sports_soccer, label: 'Acca Hub', onTap: () => widget.onNavigateToTab(1)),
                         ),
-                      ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _navButton(icon: Icons.bar_chart, label: 'Stats', onTap: () => widget.onNavigateToTab(3)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _navButton(icon: Icons.military_tech, label: 'Awards', onTap: () => widget.onNavigateToTab(4)),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _navButton(icon: Icons.scoreboard, label: 'League table', onTap: () => widget.onNavigateToTab(2)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _navButton(
+                            icon: Icons.person,
+                            label: 'Profile',
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(builder: (_) => ProfileScreen(appState: widget.appState, teamId: widget.teamId)),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(child: SizedBox()), // empty spacer, keeps Profile the same width as the others
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
     );
   }
+
   Widget _navButton({required IconData icon, required String label, required VoidCallback onTap}) {
     return InkWell(
       onTap: onTap,

@@ -48,7 +48,7 @@ class _MainTabScaffoldState extends State<MainTabScaffold> {
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
           BottomNavigationBarItem(icon: Icon(Icons.sports_soccer), label: 'Acca Hub'),
-          BottomNavigationBarItem(icon: Icon(Icons.leaderboard), label: 'League'),
+          BottomNavigationBarItem(icon: Icon(Icons.scoreboard), label: 'League'),
           BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: 'Stats'),
           BottomNavigationBarItem(icon: Icon(Icons.military_tech), label: 'Awards'),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
