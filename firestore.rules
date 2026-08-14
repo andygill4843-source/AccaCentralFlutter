@@ -62,13 +62,13 @@ service cloud.firestore {
         && request.resource.data.memberIds == [request.auth.uid];
 
       allow update: if isSignedIn() && (
-    	resource.data.managerId == request.auth.uid ||
-    	isTeamManager(teamId) ||
-        (
+    resource.data.managerId == request.auth.uid ||
+    isTeamManager(teamId) ||
+    (
       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds']) &&
       request.resource.data.memberIds == resource.data.memberIds.concat([request.auth.uid])
-        )
-      );
+    )
+  );
 
       allow delete: if isTeamManager(teamId);
     }

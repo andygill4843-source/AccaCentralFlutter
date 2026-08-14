@@ -17,6 +17,15 @@ class FirestoreService {
     return snapshot.docs.map((doc) => Member.fromMap(doc.id, doc.data())).toList();
   }
 
+  Future<List<Team>> fetchTeams(List<String> teamIds) async {
+    final teams = <Team>[];
+    for (final id in teamIds) {
+      final team = await fetchTeam(id);
+      if (team != null) teams.add(team);
+    }
+    return teams;
+  }
+
   Future<void> deleteLeg(String legId) async {
     await _db.collection('legs').doc(legId).delete();
   }

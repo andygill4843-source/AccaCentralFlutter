@@ -83,7 +83,7 @@ class _RootScreenState extends State<RootScreen> {
       case AppScreen.teamSetup:
   	return TeamSetupScreen(appState: appState, onTeamReady: () {});
       case AppScreen.main:
-  return MainTabScaffold(appState: appState, teamId: appState.currentUser?.teamIds.first ?? '');
+  return MainTabScaffold(appState: appState, teamId: appState.activeTeamId ?? appState.currentUser?.teamIds.first ?? '');
     }
   }
 }

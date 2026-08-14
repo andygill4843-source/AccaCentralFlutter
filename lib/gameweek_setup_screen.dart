@@ -23,12 +23,24 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
   bool isLoading = false;
   String? errorMessage;
   String? currentSeason;
+  GameWeek? activeGameWeek;
+  bool isManager = false;
 
   @override
   void initState() {
     super.initState();
     suggestNextWeekNumber();
     loadCurrentSeason();
+    loadActiveGameWeek();
+    loadManagerStatus();
+  }
+
+  Future<void> loadManagerStatus() async {
+    final teamId = widget.appState.currentUser?.teamIds.first;
+    final userId = widget.appState.currentUser?.id;
+    if (teamId == null || userId == null) return;
+    final member = await FirestoreService.instance.fetchMember(teamId: teamId, userId: userId);
+    if (mounted) setState(() => isManager = member?.role == MemberRole.manager);
   }
 
   Future<void> loadCurrentSeason() async {
@@ -38,15 +50,25 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     if (mounted) setState(() => currentSeason = team?.season);
   }
 
+  Future<void> loadActiveGameWeek() async {
+    final teamId = widget.appState.currentUser?.teamIds.first;
+    if (teamId == null) return;
+    final gameWeek = await FirestoreService.instance.fetchActiveGameWeek(teamId);
+    if (mounted) setState(() => activeGameWeek = gameWeek);
+  }
+
   Future<void> suggestNextWeekNumber() async {
     final teamId = widget.appState.currentUser?.teamIds.first;
     if (teamId == null) return;
+    final team = await FirestoreService.instance.fetchTeam(teamId);
     final existing = await FirestoreService.instance.fetchGameWeeks(teamId);
-    if (existing.isNotEmpty) {
-      setState(() {
-        weekNumber = existing.map((g) => g.weekNumber).reduce((a, b) => a > b ? a : b) + 1;
-      });
-    }
+    final currentSeasonGameWeeks = existing.where((g) => g.season == team?.season).toList();
+
+    setState(() {
+      weekNumber = currentSeasonGameWeeks.isEmpty
+          ? 1
+          : currentSeasonGameWeeks.map((g) => g.weekNumber).reduce((a, b) => a > b ? a : b) + 1;
+    });
   }
 
   Future<void> pickDateField(DateTime Function() getter, void Function(DateTime) setter) async {
@@ -120,6 +142,38 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         isLoading = false;
         errorMessage = e.toString();
       });
+    }
+  }
+
+  Future<void> endCurrentGameWeek() async {
+    if (activeGameWeek == null || activeGameWeek!.id == null) return;
+    final teamId = widget.appState.currentUser?.teamIds.first;
+    if (teamId == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('End gameweek?'),
+        content: Text('This ends Week ${activeGameWeek!.weekNumber}. Selections will close.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('End gameweek')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await FirestoreService.instance.settleGameWeek(teamId: teamId, gameWeekId: activeGameWeek!.id!);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gameweek ended.')));
+      }
+      loadActiveGameWeek();
+      suggestNextWeekNumber();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error ending gameweek: ${e.toString()}')));
+      }
     }
   }
 
@@ -237,6 +291,31 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
                 ),
               ),
             ),
+            if (isManager && activeGameWeek != null) ...[
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Active gameweek', style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
+                          Text('Week ${activeGameWeek!.weekNumber}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      OutlinedButton(
+                        onPressed: endCurrentGameWeek,
+                        style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                        child: const Text('End current gameweek'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,

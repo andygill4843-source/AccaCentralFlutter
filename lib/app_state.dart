@@ -8,6 +8,7 @@ enum AppScreen { splash, auth, teamSetup, main }
 class AppState extends ChangeNotifier {
   AppScreen screen = AppScreen.splash;
   AppUser? currentUser;
+  String? activeTeamId;
 
   static const _rememberMeKey = 'acca.rememberMe';
 
@@ -19,6 +20,11 @@ class AppState extends ChangeNotifier {
   Future<void> setRememberMe(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_rememberMeKey, value);
+  }
+
+  void switchActiveTeam(String teamId) {
+    activeTeamId = teamId;
+    notifyListeners();
   }
 
   Future<void> resolveAuthState() async {
@@ -37,6 +43,7 @@ class AppState extends ChangeNotifier {
     try {
       final user = await AuthService.instance.fetchCurrentUserProfile(firebaseUser.uid);
       currentUser = user;
+      activeTeamId = user.teamIds.isNotEmpty ? user.teamIds.first : null;
       screen = user.teamIds.isEmpty ? AppScreen.teamSetup : AppScreen.main;
     } catch (_) {
       screen = AppScreen.auth;
@@ -46,12 +53,19 @@ class AppState extends ChangeNotifier {
 
   void didLogIn(AppUser user) {
     currentUser = user;
+    activeTeamId = user.teamIds.isNotEmpty ? user.teamIds.first : null;
     screen = user.teamIds.isEmpty ? AppScreen.teamSetup : AppScreen.main;
     notifyListeners();
   }
 
   void didJoinOrCreateTeam(AppUser updatedUser) {
     currentUser = updatedUser;
+    // Only switch active team automatically if this was the very first team
+    // (initial setup) — for an additional team joined/created later, the
+    // caller decides whether to switch (see ProfileScreen).
+    if (activeTeamId == null && updatedUser.teamIds.isNotEmpty) {
+      activeTeamId = updatedUser.teamIds.first;
+    }
     screen = AppScreen.main;
     notifyListeners();
   }
@@ -59,6 +73,7 @@ class AppState extends ChangeNotifier {
   Future<void> logOut() async {
     await AuthService.instance.signOut();
     currentUser = null;
+    activeTeamId = null;
     await setRememberMe(false);
     screen = AppScreen.auth;
     notifyListeners();

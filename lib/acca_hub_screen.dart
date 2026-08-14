@@ -114,33 +114,34 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     );
   }
 
-  Future<void> openGameWeekAction() async {
-    if (activeGameWeek != null) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('End gameweek?'),
-          content: Text('This ends Week ${activeGameWeek!.weekNumber}. You can create a new gameweek afterward.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('End gameweek')),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-      try {
-        await FirestoreService.instance.settleGameWeek(teamId: widget.teamId, gameWeekId: activeGameWeek!.id!);
-        load();
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error ending gameweek: ${e.toString()}')));
-        }
-      }
-    } else {
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => GameWeekSetupScreen(appState: widget.appState)),
-      );
+  Future<void> openGameWeekManager() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => GameWeekSetupScreen(appState: widget.appState)),
+    );
+    load();
+  }
+
+  Future<void> endGameWeek() async {
+    if (activeGameWeek == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('End gameweek?'),
+        content: Text('This ends Week ${activeGameWeek!.weekNumber}. Selections will close.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('End gameweek')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await FirestoreService.instance.settleGameWeek(teamId: widget.teamId, gameWeekId: activeGameWeek!.id!);
       load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error ending gameweek: ${e.toString()}')));
+      }
     }
   }
 
@@ -189,28 +190,33 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                           if (isManager)
                             Expanded(
                               child: _hubButton(
-                                icon: activeGameWeek != null ? Icons.flag : Icons.add_circle_outline,
+                                icon: Icons.settings,
                                 label: 'Gameweek manager',
-                                onTap: openGameWeekAction,
+                                onTap: openGameWeekManager,
                               ),
                             ),
-                          if (isManager) const SizedBox(width: 12),
-                          Expanded(
-                            child: _hubButton(icon: Icons.sports_soccer, label: 'Pick selection', onTap: openSubmitLeg),
-                          ),
+                          if (isManager && activeGameWeek != null && !activeGameWeek!.isSettled)
+                            const SizedBox(width: 12),
+                          if (isManager && activeGameWeek != null && !activeGameWeek!.isSettled)
+                            Expanded(
+                              child: _hubButton(
+                                icon: Icons.flag,
+                                label: 'End gameweek',
+                                onTap: endGameWeek,
+                              ),
+                            ),
                         ],
                       ),
                       const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
+                            child: _hubButton(icon: Icons.sports_soccer, label: 'Pick selection', onTap: openSubmitLeg),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
                             child: _hubButton(icon: Icons.live_tv, label: 'Live scores', onTap: openLiveView),
                           ),
-                          if (isManager) const SizedBox(width: 12),
-                          if (isManager)
-                            Expanded(
-                              child: _hubButton(icon: Icons.check_circle_outline, label: 'Manual settlement', onTap: openManualSettlement),
-                            ),
                         ],
                       ),
                       if (isManager) ...[
@@ -218,10 +224,12 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                         Row(
                           children: [
                             Expanded(
-                              child: _hubButton(icon: Icons.bar_chart, label: 'Odds selection', onTap: openAccumulatorSummary),
+                              child: _hubButton(icon: Icons.check_circle_outline, label: 'Manual settlement', onTap: openManualSettlement),
                             ),
                             const SizedBox(width: 12),
-                            const Expanded(child: SizedBox()), // empty cell, matches the sketch
+                            Expanded(
+                              child: _hubButton(icon: Icons.bar_chart, label: 'Odds selection', onTap: openAccumulatorSummary),
+                            ),
                           ],
                         ),
                       ],

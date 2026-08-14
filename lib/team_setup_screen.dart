@@ -29,6 +29,11 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Team Setup'),
+        backgroundColor: AccaColors.primary,
+        foregroundColor: Colors.white,
+      ),
       backgroundColor: AccaColors.background,
       body: SafeArea(
         child: Padding(
