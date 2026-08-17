@@ -102,12 +102,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   else
                     DropdownButtonFormField<String>(
                       value: activeTeamId,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         filled: true,
                         fillColor: Colors.white,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        border: OutlineInputBorder(),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(color: AccaColors.gold, width: 1.5),
+                        ),
                       ),
+                          dropdownColor: Colors.white,
+                          style: accaFieldTextStyle,
                       items: myTeams
                           .where((t) => t.id != null)
                           .map((t) => DropdownMenuItem(value: t.id, child: Text(t.name)))

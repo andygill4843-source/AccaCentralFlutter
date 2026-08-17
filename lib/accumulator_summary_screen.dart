@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'firestore_service.dart';
 import 'models.dart';
 import 'main.dart'; // for AccaColors
-import 'package:flutter/services.dart';
+import 'odds_format.dart';
 
 class _BookmakerOption {
   final String bookmaker;
@@ -29,7 +30,8 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
   String? errorMessage;
   String? selectedBookmaker;
   double? combinedOdds;
-  Map<String, String> memberNames = {}; // memberId -> displayName
+  bool isLocked = false;
+  Map<String, String> memberNames = {};
   bool isRejecting = false;
 
   @override
@@ -97,10 +99,28 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     return options;
   }
 
-  bool isLocked = false;
-
   Future<void> select(_BookmakerOption option) async {
     if (widget.gameWeek.id == null) return;
+
+    final legMemberIds = legs.map((l) => l.memberId).toSet();
+    if (legMemberIds.length < memberNames.length) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Other squad member legs currently outstanding'),
+          content: const Text('Do you want to continue?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('No')),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Yes')),
+          ],
+        ),
+      );
+      if (proceed != true) {
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+    }
+
     setState(() => isSaving = true);
     try {
       await FirestoreService.instance.setGameWeekBookmaker(
@@ -115,10 +135,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         isLocked = true;
         isSaving = false;
       });
-
-      if (mounted) {
-        await offerTransfer(option);
-      }
+      if (mounted) await offerTransfer(option);
     } catch (e) {
       setState(() => isSaving = false);
       if (mounted) {
@@ -143,26 +160,16 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
               : 'You can transfer to ${option.bookmaker} with all legs opened there, or remain on the app with the odds locked in.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, 'return'),
-            child: const Text('Return'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, 'return'), child: const Text('Return')),
           if (links.isNotEmpty)
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'transfer'),
-              child: Text('Transfer to ${option.bookmaker}'),
-            ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, 'remain'),
-            child: const Text('Remain on the app'),
-          ),
+            TextButton(onPressed: () => Navigator.pop(context, 'transfer'), child: Text('Transfer to ${option.bookmaker}')),
+          TextButton(onPressed: () => Navigator.pop(context, 'remain'), child: const Text('Remain on the app')),
         ],
       ),
     );
 
     switch (action) {
       case 'return':
-        // Undo the lock entirely — back to an unlocked state, no bookmaker selected.
         if (widget.gameWeek.id != null) {
           await FirestoreService.instance.unlockGameWeek(widget.gameWeek.id!);
         }
@@ -181,7 +188,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         break;
       case 'remain':
       default:
-        // Odds stay locked, just close the dialog — no action needed.
         break;
     }
   }
@@ -190,14 +196,14 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     final buffer = StringBuffer();
     buffer.writeln('Acca Central — Gameweek ${widget.gameWeek.weekNumber}');
     buffer.writeln('Bookmaker: ${option.bookmaker}');
-    buffer.writeln('Combined odds: ${option.combinedOdds.toStringAsFixed(2)}');
+    buffer.writeln('Combined odds: ${decimalToFractional(option.combinedOdds)}');
     buffer.writeln();
     for (final leg in legs) {
       final name = memberNames[leg.memberId] ?? 'Unknown';
       buffer.writeln('$name: ${leg.selectionDescription}');
       final price = (leg.bookmakerPrices ?? {})[option.bookmaker];
       if (price != null) {
-        buffer.writeln('  ${price.toStringAsFixed(2)} @ ${option.bookmaker}');
+        buffer.writeln('  ${decimalToFractional(price)} @ ${option.bookmaker}');
       }
     }
     return buffer.toString();
@@ -206,9 +212,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
   Future<void> copyLegList(_BookmakerOption option) async {
     await Clipboard.setData(ClipboardData(text: buildLegListText(option)));
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Leg list copied to clipboard.')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Leg list copied to clipboard.')));
     }
   }
 
@@ -259,7 +263,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                           for (final leg in legs) _legReviewCard(leg),
                           const SizedBox(height: 20),
                         ],
-                        if (selectedBookmaker != null) ...[
+                        if (isLocked) ...[
                           const Padding(
                             padding: EdgeInsets.only(bottom: 8),
                             child: Row(
@@ -281,8 +285,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                                 children: [
                                   const Text('Selected bookmaker', style: TextStyle(fontSize: 12)),
                                   Text(selectedBookmaker!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                                  if (combinedOdds != null)
-                                    Text('Combined odds: ${combinedOdds!.toStringAsFixed(2)}'),
+                                  if (combinedOdds != null) Text('Combined odds: ${decimalToFractional(combinedOdds!)}'),
                                 ],
                               ),
                             ),
@@ -290,7 +293,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                           const SizedBox(height: 16),
                         ],
                         if (!isLocked) ...[
-                          if (!isLocked) ...[
                           const Text('Compare bookmakers', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                           const SizedBox(height: 8),
                           if (bookmakerOptions.isEmpty)
@@ -303,29 +305,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                             )
                           else
                             for (final option in bookmakerOptions) _bookmakerCard(option),
-                        ],
-                        if (isLocked && selectedBookmaker != null) ...[
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: () => copyLegList(_currentLockedOption()),
-                                  icon: const Icon(Icons.copy),
-                                  label: const Text('Copy legs'),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: () => shareViaWhatsApp(_currentLockedOption()),
-                                  icon: const Icon(Icons.share),
-                                  label: const Text('Share on WhatsApp'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
                         ],
                         if (isLocked && selectedBookmaker != null) ...[
                           const SizedBox(height: 12),
@@ -369,7 +348,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(option.bookmaker, style: const TextStyle(fontWeight: FontWeight.w600)),
-                      Text('Combined odds: ${option.combinedOdds.toStringAsFixed(2)}', style: const TextStyle(fontSize: 12)),
+                      Text('Combined odds: ${decimalToFractional(option.combinedOdds)}', style: const TextStyle(fontSize: 12)),
                     ],
                   ),
                 ),
@@ -420,7 +399,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                   Text(leg.fixtureDescription, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                   Text(leg.selectionDescription, style: const TextStyle(fontSize: 13)),
                   Text(
-                    '${leg.decimalOddsAtSelection.toStringAsFixed(2)} — ${leg.bookmaker}',
+                    '${decimalToFractional(leg.decimalOddsAtSelection)} — ${leg.bookmaker}',
                     style: TextStyle(fontSize: 12, color: AccaColors.textSecondary),
                   ),
                 ],
@@ -436,5 +415,4 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
       ),
     );
   }
-
 }

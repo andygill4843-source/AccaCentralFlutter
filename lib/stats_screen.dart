@@ -3,14 +3,21 @@ import 'firestore_service.dart';
 import 'models.dart';
 import 'scoring_engine.dart';
 import 'main.dart'; // for AccaColors
+import 'app_state.dart';
+import 'profile_screen.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'odds_format.dart';
 
 class StatsScreen extends StatefulWidget {
+  final AppState appState;
   final String teamId;
 
-  const StatsScreen({super.key, required this.teamId});
+  const StatsScreen({super.key, required this.appState, required this.teamId});
 
   @override
   State<StatsScreen> createState() => _StatsScreenState();
+
+  
 }
 
 class _StatsScreenState extends State<StatsScreen> {
@@ -36,6 +43,14 @@ class _StatsScreenState extends State<StatsScreen> {
   void initState() {
     super.initState();
     load();
+  }
+
+  @override
+  void didUpdateWidget(covariant StatsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.teamId != widget.teamId) {
+      load();
+    }
   }
 
   Future<void> load() async {
@@ -160,9 +175,24 @@ class _StatsScreenState extends State<StatsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Stats'),
+        title: RichText(
+          text: TextSpan(
+            children: [
+              TextSpan(text: 'Sta', style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600)),
+              TextSpan(text: 'ts', style: GoogleFonts.poppins(color: AccaColors.gold, fontSize: 20, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.person),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => ProfileScreen(appState: widget.appState, teamId: widget.teamId)),
+            ),
+          ),
+        ],
       ),
       backgroundColor: AccaColors.background,
       body: isLoading
@@ -174,20 +204,27 @@ class _StatsScreenState extends State<StatsScreen> {
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
-                      if (allSeasons.isNotEmpty)
+                      if (allSeasons.isNotEmpty) ...[
+                        _sectionHeader('Season'),
                         DropdownButtonFormField<String>(
-                          value: selectedSeason,
-                          decoration: const InputDecoration(
-                            labelText: 'Season',
+                          initialValue: selectedSeason,
+                          decoration: InputDecoration(
                             filled: true,
                             fillColor: Colors.white,
-                            border: OutlineInputBorder(),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(color: AccaColors.gold, width: 1.5),
+                            ),
                           ),
+                          dropdownColor: Colors.white,
+                          style: accaFieldTextStyle,
                           items: allSeasons
-                              .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                              .map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(color: Colors.black))))
                               .toList(),
                           onChanged: onSeasonChanged,
                         ),
+                      ],
                       const SizedBox(height: 16),
 
                       _sectionHeader('Season champion'),
@@ -335,7 +372,7 @@ class _StatsScreenState extends State<StatsScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                Text(leg.decimalOddsAtSelection.toStringAsFixed(2), style: TextStyle(color: accent, fontWeight: FontWeight.bold)),
+                Text(decimalToFractional(leg.decimalOddsAtSelection), style: TextStyle(color: accent, fontWeight: FontWeight.bold)),
               ],
             ),
             Text(leg.selectionDescription, style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
@@ -355,10 +392,10 @@ class _StatsScreenState extends State<StatsScreen> {
           Row(
             children: [
               if (m.averageWinningOdds != null)
-                Text('W: ${m.averageWinningOdds!.toStringAsFixed(2)}', style: TextStyle(color: AccaColors.win, fontSize: 13)),
+                Text('W: ${decimalToFractional(m.averageWinningOdds!)}', style: TextStyle(color: AccaColors.win, fontSize: 13)),
               if (m.averageWinningOdds != null && m.averageLosingOdds != null) const SizedBox(width: 12),
               if (m.averageLosingOdds != null)
-                Text('L: ${m.averageLosingOdds!.toStringAsFixed(2)}', style: TextStyle(color: AccaColors.loss, fontSize: 13)),
+                Text('L: ${decimalToFractional(m.averageLosingOdds!)}', style: TextStyle(color: AccaColors.loss, fontSize: 13)),
             ],
           ),
         ],

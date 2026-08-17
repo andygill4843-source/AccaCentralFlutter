@@ -101,7 +101,7 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
             contentPadding: const EdgeInsets.all(12),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: Colors.grey.shade300),
+              borderSide: BorderSide(color: Colors.white24),
             ),
           ),
         ),

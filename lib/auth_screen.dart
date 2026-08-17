@@ -106,20 +106,25 @@ class _AuthScreenState extends State<AuthScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: TextStyle(fontSize: 13, color: AccaColors.textSecondary)),
+        Text(label, style: const TextStyle(fontSize: 13, color: Colors.white70)),
         const SizedBox(height: 4),
         TextField(
           controller: controller,
           obscureText: obscure,
           keyboardType: keyboardType,
           textCapitalization: TextCapitalization.none,
+          style: const TextStyle(color: Colors.black, fontSize: 15),
           decoration: InputDecoration(
             filled: true,
             fillColor: Colors.white,
             contentPadding: const EdgeInsets.all(12),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: Colors.grey.shade300),
+              borderSide: const BorderSide(color: AccaColors.gold, width: 1.5),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: AccaColors.gold, width: 1.5),
             ),
           ),
         ),

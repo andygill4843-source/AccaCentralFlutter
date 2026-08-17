@@ -3,6 +3,7 @@ import 'firestore_service.dart';
 import 'models.dart';
 import 'submit_leg_screen.dart';
 import 'main.dart'; // for AccaColors
+import 'odds_format.dart';
 
 class CurrentLegScreen extends StatefulWidget {
   final AccumulatorLeg leg;
@@ -128,7 +129,7 @@ class _CurrentLegScreenState extends State<CurrentLegScreen> {
                     Text(widget.leg.selectionDescription, style: TextStyle(fontSize: 13, color: AccaColors.textSecondary)),
                     const SizedBox(height: 8),
                     Text(
-                      '${widget.leg.decimalOddsAtSelection.toStringAsFixed(2)} — ${widget.leg.bookmaker}',
+                      '${decimalToFractional(widget.leg.decimalOddsAtSelection)} — ${widget.leg.bookmaker}',
                       style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                     ),
                   ],

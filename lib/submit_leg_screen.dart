@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+
+import 'uk_odds_api_service.dart';
 import 'odds_api_service.dart';
 import 'pick_outcome_screen.dart';
-import 'main.dart'; // for AccaColors
+import 'main.dart';
 
 class SubmitLegScreen extends StatefulWidget {
   final String gameWeekId;
@@ -20,113 +22,610 @@ class SubmitLegScreen extends StatefulWidget {
   });
 
   @override
-  State<SubmitLegScreen> createState() => _SubmitLegScreenState();
+  State<SubmitLegScreen> createState() =>
+      _SubmitLegScreenState();
 }
 
-class _SubmitLegScreenState extends State<SubmitLegScreen> {
-  SoccerLeague selectedLeague = SoccerLeague.premierLeague;
-  List<OddsEvent> events = [];
+class _SubmitLegScreenState
+    extends State<SubmitLegScreen> {
+
+  // ============================================================
+  // LEAGUES
+  // ============================================================
+
+  static const Map<String, String> _leagueOptions = {
+    'english premier': 'Premier League',
+    'english championship': 'Championship',
+    'champions league': 'Champions League',
+    'la liga': 'La Liga',
+    'serie a': 'Serie A',
+    'bundesliga': 'Bundesliga',
+    'ligue 1': 'Ligue 1',
+  };
+
+  // ============================================================
+  // THE ODDS API LEAGUE MAP
+  // ============================================================
+
+  static const Map<String, SoccerLeague?>
+      _theOddsApiLeagueMap = {
+    'english premier':
+        SoccerLeague.premierLeague,
+
+    'english championship':
+        null,
+
+    'champions league':
+        SoccerLeague.championsLeague,
+
+    'la liga':
+        SoccerLeague.laLiga,
+
+    'serie a':
+        SoccerLeague.serieA,
+
+    'bundesliga':
+        SoccerLeague.bundesliga,
+
+    'ligue 1':
+        SoccerLeague.ligue1,
+  };
+
+  // ============================================================
+  // STATE
+  // ============================================================
+
+  String selectedLeague =
+      'english premier';
+
+  List<UkOddsFixtureSummary> events =
+      <UkOddsFixtureSummary>[];
+
   bool isLoading = false;
+
   String? errorMessage;
 
   @override
   void initState() {
     super.initState();
+
     loadEvents();
   }
 
+  // ============================================================
+  // LOAD EVENTS
+  // ============================================================
+
   Future<void> loadEvents() async {
-    setState(() {
-      isLoading = true;
-      errorMessage = null;
-    });
-    try {
-      final allEvents = await OddsApiService.instance.fetchOdds(league: selectedLeague);
-      final filtered = allEvents
-          .where((e) => e.commenceTime.isAfter(widget.windowStart) && e.commenceTime.isBefore(widget.windowEnd))
-          .toList();
+
+    if (mounted) {
       setState(() {
-        events = filtered;
-        isLoading = false;
+        isLoading = true;
+        errorMessage = null;
+
+        // Clear old results immediately.
+        events = <UkOddsFixtureSummary>[];
       });
-    } catch (e) {
+    }
+
+    final requestedLeague =
+        selectedLeague;
+
+    debugPrint(
+      '========================================',
+    );
+
+    debugPrint(
+      'SUBMIT LEG - LOADING FIXTURES',
+    );
+
+    debugPrint(
+      'Selected league: $requestedLeague',
+    );
+
+    debugPrint(
+      'Window start: ${widget.windowStart}',
+    );
+
+    debugPrint(
+      'Window end: ${widget.windowEnd}',
+    );
+
+    debugPrint(
+      '========================================',
+    );
+
+    try {
+
+      final loadedEvents =
+          await UkOddsApiService.instance
+              .fetchFixtures(
+        from: widget.windowStart,
+        to: widget.windowEnd,
+        league: requestedLeague,
+      );
+
+      debugPrint(
+        '========================================',
+      );
+
+      debugPrint(
+        'SUBMIT LEG - EVENTS RECEIVED',
+      );
+
+      debugPrint(
+        'Requested league: $requestedLeague',
+      );
+
+      debugPrint(
+        'Number of events: ${loadedEvents.length}',
+      );
+
+      for (final event in loadedEvents) {
+        debugPrint(
+          'DISPLAY EVENT: '
+          '${event.leagueName} | '
+          '${event.homeTeam} vs '
+          '${event.awayTeam}',
+        );
+      }
+
+      debugPrint(
+        '========================================',
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      // Make absolutely sure the response belongs to the
+      // currently selected league.
+      //
+      // This prevents a slower previous request from replacing
+      // the results of a newer selection.
+
+      if (selectedLeague != requestedLeague) {
+        return;
+      }
+
       setState(() {
-        errorMessage = "Couldn't load fixtures/odds.";
+        events = loadedEvents;
         isLoading = false;
+        errorMessage = null;
+      });
+
+    } catch (e) {
+
+      debugPrint(
+        'SUBMIT LEG - ERROR: $e',
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        events = <UkOddsFixtureSummary>[];
+        isLoading = false;
+        errorMessage =
+            "Couldn't load fixtures: $e";
       });
     }
   }
 
+  // ============================================================
+  // LEAGUE CHANGED
+  // ============================================================
+
+  Future<void> changeLeague(
+    String value,
+  ) async {
+
+    if (value == selectedLeague) {
+      return;
+    }
+
+    setState(() {
+      selectedLeague = value;
+
+      // Immediately remove the previous league's fixtures.
+      events = <UkOddsFixtureSummary>[];
+
+      errorMessage = null;
+    });
+
+    await loadEvents();
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+    BuildContext context,
+  ) {
+
     return Scaffold(
+
       appBar: AppBar(
-        title: const Text('Pick your leg'),
-        backgroundColor: AccaColors.primary,
-        foregroundColor: Colors.white,
+        title: const Text(
+          'Pick your leg',
+        ),
+        backgroundColor:
+            AccaColors.primary,
+        foregroundColor:
+            Colors.white,
       ),
-      backgroundColor: AccaColors.background,
+
+      backgroundColor:
+          AccaColors.background,
+
       body: Column(
         children: [
+
+          // ======================================================
+          // LEAGUE SELECTOR
+          // ======================================================
+
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: DropdownButtonFormField<SoccerLeague>(
-              value: selectedLeague,
-              decoration: const InputDecoration(
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(),
-              ),
-              items: SoccerLeague.values
-                  .map((l) => DropdownMenuItem(value: l, child: Text(l.displayName)))
-                  .toList(),
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() => selectedLeague = value);
-                loadEvents();
-              },
+            padding:
+                const EdgeInsets.all(16),
+
+            child:
+                DropdownButtonFormField<String>(
+                  
+              initialValue: selectedLeague,
+                  
+              decoration: accaFieldDecoration('League'),
+              
+              dropdownColor: Colors.white,
+          
+              style: accaFieldTextStyle,
+
+              items:
+                  _leagueOptions.entries
+                      .map(
+                (
+                  entry,
+                ) {
+                  return DropdownMenuItem<
+                      String>(
+                    value:
+                        entry.key,
+                    child:
+                        Text(
+                      entry.value,
+                    ),
+                  );
+                },
+              ).toList(),
+
+              onChanged:
+                  isLoading
+                      ? null
+                      : (
+                          value,
+                        ) {
+                          if (value ==
+                              null) {
+                            return;
+                          }
+
+                          changeLeague(
+                            value,
+                          );
+                        },
             ),
           ),
+
+          // ======================================================
+          // FIXTURES
+          // ======================================================
+
           Expanded(
-            child: isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : errorMessage != null
-                    ? Center(child: Text(errorMessage!, style: const TextStyle(color: Colors.red)))
-                    : events.isEmpty
-                        ? const Center(child: Text('No upcoming fixtures found for this competition and gameweek window.'))
-                        : ListView.builder(
-                            itemCount: events.length,
-                            itemBuilder: (context, index) {
-                              final event = events[index];
-                              return ListTile(
-                                title: Text('${event.homeTeam} vs ${event.awayTeam}'),
-                                subtitle: Text(formatDateTime(event.commenceTime)),
-                                onTap: () async {
-                                  final submitted = await Navigator.of(context).push<bool>(
-                                    MaterialPageRoute(
-                                      builder: (_) => PickOutcomeScreen(
-                                        event: event,
-                                        league: selectedLeague,
-                                        gameWeekId: widget.gameWeekId,
-                                        memberId: widget.memberId,
-                                        teamId: widget.teamId,
-                                      ),
-                                    ),
-                                  );
-                                  if (submitted == true && mounted) {
-                                    Navigator.of(context).pop(true);
-                                  }
-                                },
-                              );
-                            },
-                          ),
+            child:
+                _buildFixtureContent(),
           ),
         ],
       ),
     );
   }
 
-  String formatDateTime(DateTime dt) {
-    return '${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  // ============================================================
+  // FIXTURE CONTENT
+  // ============================================================
+
+  Widget _buildFixtureContent() {
+
+    if (isLoading) {
+
+      return const Center(
+        child:
+            Column(
+          mainAxisSize:
+              MainAxisSize.min,
+          children: [
+
+            CircularProgressIndicator(),
+
+            SizedBox(
+              height: 16,
+            ),
+
+            Text(
+              'Loading fixtures...',
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (errorMessage != null) {
+
+      return Center(
+        child:
+            Padding(
+          padding:
+              const EdgeInsets.all(24),
+
+          child:
+              Column(
+            mainAxisSize:
+                MainAxisSize.min,
+
+            children: [
+
+              const Icon(
+                Icons.error_outline,
+                size: 48,
+                color: Colors.red,
+              ),
+
+              const SizedBox(
+                height: 16,
+              ),
+
+              Text(
+                errorMessage!,
+                textAlign:
+                    TextAlign.center,
+                style:
+                    const TextStyle(
+                  color: Colors.red,
+                ),
+              ),
+
+              const SizedBox(
+                height: 16,
+              ),
+
+              ElevatedButton(
+                onPressed:
+                    loadEvents,
+                child:
+                    const Text(
+                  'Try again',
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (events.isEmpty) {
+
+      return Center(
+        child:
+            Padding(
+          padding:
+              const EdgeInsets.all(24),
+
+          child:
+              Column(
+            mainAxisSize:
+                MainAxisSize.min,
+
+            children: [
+
+              const Icon(
+                Icons.sports_soccer,
+                size: 48,
+              ),
+
+              const SizedBox(
+                height: 16,
+              ),
+
+              Text(
+                'No fixtures found for '
+                '${_leagueOptions[selectedLeague] ?? selectedLeague}.',
+                textAlign:
+                    TextAlign.center,
+                style:
+                    const TextStyle(
+                  fontSize: 16,
+                ),
+              ),
+
+              const SizedBox(
+                height: 8,
+              ),
+
+              Text(
+                'Check the selected gameweek window.',
+                textAlign:
+                    TextAlign.center,
+                style:
+                    TextStyle(
+                  color:
+                      AccaColors.textSecondary,
+                ),
+              ),
+
+              const SizedBox(
+                height: 16,
+              ),
+
+              ElevatedButton(
+                onPressed:
+                    loadEvents,
+                child:
+                    const Text(
+                  'Reload fixtures',
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ==========================================================
+    // FIXTURE LIST
+    // ==========================================================
+
+    return ListView.builder(
+
+      itemCount:
+          events.length,
+
+      itemBuilder:
+          (
+        context,
+        index,
+      ) {
+
+        final event =
+            events[index];
+
+        return Card(
+          margin:
+              const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 5,
+          ),
+
+          child:
+              ListTile(
+
+            leading:
+                const Icon(
+              Icons.sports_soccer,
+              color:
+                  AccaColors.primary,
+            ),
+
+            title:
+                Text(
+              '${event.homeTeam} vs '
+              '${event.awayTeam}',
+              style:
+                  const TextStyle(
+                fontWeight:
+                    FontWeight.w600,
+              ),
+            ),
+
+            subtitle:
+                Column(
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
+
+              children: [
+
+                const SizedBox(
+                  height: 4,
+                ),
+
+                Text(
+                  event.leagueName,
+                  style:
+                      const TextStyle(
+                    fontWeight:
+                        FontWeight.w500,
+                  ),
+                ),
+
+                const SizedBox(
+                  height: 2,
+                ),
+
+                Text(
+                  formatDateTime(
+                    event.kickoffUtc,
+                  ),
+                ),
+              ],
+            ),
+
+            trailing:
+                const Icon(
+              Icons.chevron_right,
+            ),
+
+            onTap:
+                () async {
+
+              final submitted =
+                  await Navigator.of(
+                context,
+              ).push<bool>(
+                MaterialPageRoute(
+                  builder:
+                      (_) =>
+                          PickOutcomeScreen(
+                    fixture:
+                        event,
+
+                    gameWeekId:
+                        widget.gameWeekId,
+
+                    memberId:
+                        widget.memberId,
+
+                    teamId:
+                        widget.teamId,
+
+                    theOddsApiLeague:
+                        _theOddsApiLeagueMap[
+                          selectedLeague
+                        ],
+                  ),
+                ),
+              );
+
+              if (submitted ==
+                      true &&
+                  mounted) {
+
+                Navigator.of(
+                  context,
+                ).pop(true);
+              }
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  // ============================================================
+  // DATE FORMAT
+  // ============================================================
+
+  String formatDateTime(
+    DateTime dateTime,
+  ) {
+
+    final local =
+        dateTime.toLocal();
+
+    return
+        '${local.day}/'
+        '${local.month} '
+        '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}';
   }
 }

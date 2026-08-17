@@ -2,15 +2,18 @@ import 'package:flutter/material.dart';
 import 'app_state.dart';
 import 'firestore_service.dart';
 import 'scoring_engine.dart';
-import 'profile_screen.dart';
+import 'models.dart';
 import 'main.dart'; // for AccaColors
+import 'odds_format.dart';
+import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
   final void Function(int tabIndex) onNavigateToTab;
+  final int refreshToken;
 
-  const HomeScreen({super.key, required this.appState, required this.teamId, required this.onNavigateToTab});
+  const HomeScreen({super.key, required this.appState, required this.teamId, required this.onNavigateToTab, this.refreshToken = 0});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -18,16 +21,41 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool isLoading = true;
+  String? errorMessage;
+
+  GameWeek? activeGameWeek;
   int? nextWeekNumber;
   DateTime? nextDeadline;
   bool hasActiveGameWeek = false;
-  List<LeagueTableEntry> topThree = [];
-  String? errorMessage;
+
+  Member? currentMember;
+  List<Member> members = [];
+  List<AccumulatorLeg> activeWeekLegs = [];
+  List<LeagueTableEntry> fullTable = [];
+  LeagueTableEntry? myEntry;
+  int? pointsOffThird;
+  ({String name, double weightedPoints})? previousWeekTopScorer;
+  int myOutstandingFines = 0;
+  List<Fine> recentFines = [];
 
   @override
   void initState() {
     super.initState();
     load();
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.teamId != widget.teamId || oldWidget.refreshToken != widget.refreshToken) {
+      load();
+    }
+  }
+
+  void nudge(Member member) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Nudge sent to ${member.displayName}.')),
+    );
   }
 
   Future<void> load() async {
@@ -36,17 +64,85 @@ class _HomeScreenState extends State<HomeScreen> {
       errorMessage = null;
     });
     try {
+      final userId = widget.appState.currentUser?.id;
+      final team = await FirestoreService.instance.fetchTeam(widget.teamId);
       final gameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
-      final members = await FirestoreService.instance.fetchMembers(widget.teamId);
-      final legs = await FirestoreService.instance.fetchLegs(widget.teamId);
-      final table = ScoringEngine.buildLeagueTable(members: members, legs: legs);
+      final loadedMembers = await FirestoreService.instance.fetchMembers(widget.teamId);
+      final allLegs = await FirestoreService.instance.fetchLegs(widget.teamId);
+      final gameWeeks = await FirestoreService.instance.fetchGameWeeks(widget.teamId);
+      final fines = await FirestoreService.instance.fetchFines(widget.teamId);
+
+      Member? me;
+      if (userId != null) {
+        try {
+          me = loadedMembers.firstWhere((m) => m.userId == userId);
+        } catch (_) {
+          me = null;
+        }
+      }
+
+      final currentSeasonGameWeeks = gameWeeks.where((g) => g.season == team?.season).toList();
+      final currentSeasonGameWeekIds = currentSeasonGameWeeks.map((g) => g.id).toSet();
+      final currentSeasonLegs = allLegs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
+      final table = ScoringEngine.buildLeagueTable(members: loadedMembers, legs: currentSeasonLegs);
+
+      LeagueTableEntry? mine;
+      int? offThird;
+      if (me?.id != null) {
+        try {
+          mine = table.firstWhere((e) => e.memberId == me!.id);
+          if (table.length >= 3) {
+            offThird = table[2].totalBasePoints - mine.totalBasePoints; // positive = behind, negative = clear
+          }
+        } catch (_) {
+          mine = null;
+        }
+      }
+
+      // Biggest weighted-points winner from the most recently SETTLED gameweek.
+      final settledWeeks = currentSeasonGameWeeks.where((g) => g.isSettled).toList()
+        ..sort((a, b) => b.weekNumber.compareTo(a.weekNumber));
+      ({String name, double weightedPoints})? topScorer;
+      if (settledWeeks.isNotEmpty) {
+        final lastWeek = settledWeeks.first;
+        final lastWeekLegs = allLegs.where((l) => l.gameWeekId == lastWeek.id).toList();
+        final Map<String, double> pointsByMember = {};
+        for (final leg in lastWeekLegs.where((l) => l.outcome == LegOutcome.won || l.outcome == LegOutcome.lost)) {
+          pointsByMember[leg.memberId] = (pointsByMember[leg.memberId] ?? 0) + leg.weightedPoints;
+        }
+        if (pointsByMember.isNotEmpty) {
+          final topEntry = pointsByMember.entries.reduce((a, b) => a.value > b.value ? a : b);
+          final name = loadedMembers.firstWhere((m) => m.id == topEntry.key, orElse: () => Member(userId: '', displayName: 'Unknown', teamId: widget.teamId, joinedAt: DateTime.now())).displayName;
+          topScorer = (name: name, weightedPoints: topEntry.value);
+        }
+      }
+
+      final myFineCount = me?.id != null
+          ? fines.where((f) => f.memberId == me!.id && f.countsTowardTally).length
+          : 0;
+
+      final recent = fines.toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      List<AccumulatorLeg> weekLegs = [];
+      if (gameWeek?.id != null) {
+        weekLegs = allLegs.where((l) => l.gameWeekId == gameWeek!.id).toList();
+      }
 
       if (mounted) {
         setState(() {
+          activeGameWeek = gameWeek;
           hasActiveGameWeek = gameWeek != null;
           nextWeekNumber = gameWeek?.weekNumber;
           nextDeadline = gameWeek?.deadline;
-          topThree = table.take(3).toList();
+          currentMember = me;
+          members = loadedMembers;
+          activeWeekLegs = weekLegs;
+          fullTable = table;
+          myEntry = mine;
+          pointsOffThird = offThird;
+          previousWeekTopScorer = topScorer;
+          myOutstandingFines = myFineCount;
+          recentFines = recent.take(5).toList();
           isLoading = false;
         });
       }
@@ -60,144 +156,262 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  String _formatDate(DateTime dt) =>
-      '${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  String _formatDate(DateTime dt) => '${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Acca Central'),
+        automaticallyImplyLeading: false,
+        centerTitle: false,
+        titleSpacing: 16,
+        title: Image.asset('assets/images/logo_horizontal.png', height: 36, fit: BoxFit.contain),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.person),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => ProfileScreen(appState: widget.appState, teamId: widget.teamId)),
+            ),
+          ),
+        ],
       ),
       backgroundColor: AccaColors.background,
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  color: Colors.white,
-                  child: Text(
-                    hasActiveGameWeek
-                        ? 'Gameweek $nextWeekNumber — deadline ${_formatDate(nextDeadline!)}'
-                        : 'No active gameweek',
-                    style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 110,
-                  child: Row(
+          : errorMessage != null
+              ? Center(child: Text(errorMessage!, style: const TextStyle(color: Colors.red)))
+              : RefreshIndicator(
+                  onRefresh: load,
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
                     children: [
-                      Expanded(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: AccaColors.primary,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          padding: const EdgeInsets.all(8),
-                          clipBehavior: Clip.antiAlias,
-                          child: Image.asset('assets/images/logo.png', fit: BoxFit.contain),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AccaColors.gold, width: 1.5),
+                        ),
+                        child: Text(
+                          hasActiveGameWeek
+                              ? 'Gameweek $nextWeekNumber — deadline ${nextDeadline != null ? _formatDate(nextDeadline!) : '—'}'
+                              : 'No active gameweek',
+                          style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14, color: Colors.black),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.grey.shade300),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Top 3 in league', style: TextStyle(fontSize: 11, color: AccaColors.textSecondary)),
-                              const SizedBox(height: 6),
-                              if (topThree.isEmpty)
-                                Text('No data yet', style: TextStyle(fontSize: 12, color: AccaColors.textSecondary))
-                              else
-                                for (int i = 0; i < topThree.length; i++)
-                                  Text(
-                                    '${i + 1}. ${topThree[i].displayName}',
-                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                            ],
-                          ),
-                        ),
-                      ),
+                      const SizedBox(height: 16),
+                      _statusBox(),
                     ],
                   ),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                      children: [
-                        Expanded(
-                          child: _navButton(icon: Icons.sports_soccer, label: 'Acca Hub', onTap: () => widget.onNavigateToTab(1)),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _navButton(icon: Icons.bar_chart, label: 'Stats', onTap: () => widget.onNavigateToTab(3)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _navButton(icon: Icons.military_tech, label: 'Awards', onTap: () => widget.onNavigateToTab(4)),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _navButton(icon: Icons.scoreboard, label: 'League table', onTap: () => widget.onNavigateToTab(2)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _navButton(
-                            icon: Icons.person,
-                            label: 'Profile',
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(builder: (_) => ProfileScreen(appState: widget.appState, teamId: widget.teamId)),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(child: SizedBox()), // empty spacer, keeps Profile the same width as the others
-                      ],
-                    ),
-                  ],
                 ),
     );
   }
 
-  Widget _navButton({required IconData icon, required String label, required VoidCallback onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        height: 90,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.grey.shade300),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 28, color: AccaColors.primary),
-            const SizedBox(height: 6),
-            Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+  Widget _statusBox() {
+    if (hasActiveGameWeek && !(activeGameWeek?.isLocked ?? false)) return _submissionStatusBox();
+    if (hasActiveGameWeek && (activeGameWeek?.isLocked ?? false)) return _lockedLegsBox();
+    return _noActiveGameWeekSummary();
+  }
+
+  // State 1: active gameweek, not yet locked — who's picked, who hasn't.
+  Widget _submissionStatusBox() {
+    final deadline = activeGameWeek?.deadline;
+    final within24h = deadline != null && deadline.isAfter(DateTime.now()) && deadline.difference(DateTime.now()).inHours <= 24;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AccaColors.gold, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: const [
+              Icon(Icons.fact_check, color: AccaColors.primary, size: 18),
+              SizedBox(width: 6),
+              Text('Acca Selection Inspection', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          for (final member in members)
+            if (member.id != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  children: [
+                    const Icon(Icons.sports_soccer, size: 16, color: AccaColors.gold),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(member.displayName, style: const TextStyle(color: Colors.black))),
+                    if (within24h && !activeWeekLegs.any((l) => l.memberId == member.id))
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: OutlinedButton(
+                          onPressed: () => nudge(member),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.black,
+                            side: const BorderSide(color: AccaColors.gold),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('Nudge', style: TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                    Icon(
+                      activeWeekLegs.any((l) => l.memberId == member.id) ? Icons.check_circle : Icons.cancel,
+                      color: activeWeekLegs.any((l) => l.memberId == member.id) ? AccaColors.win : AccaColors.loss,
+                      size: 20,
+                    ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  // State 2: active gameweek, locked — everyone's actual pick + Challenge stub.
+  Widget _lockedLegsBox() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AccaColors.gold, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: const [
+              Icon(Icons.list_alt, color: AccaColors.primary, size: 18),
+              SizedBox(width: 6),
+              Text("This Gameweek's Legs", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black)),
+            ],
+          ),
+          if (activeGameWeek?.combinedOdds != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Accumulator odds: ${decimalToFractional(activeGameWeek!.combinedOdds!)}',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black),
+            ),
           ],
-        ),
+          const SizedBox(height: 12),
+          for (final leg in activeWeekLegs)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  const Icon(Icons.sports_soccer, size: 16, color: AccaColors.gold),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          members.firstWhere((m) => m.id == leg.memberId, orElse: () => Member(userId: '', displayName: 'Unknown', teamId: widget.teamId, joinedAt: DateTime.now())).displayName,
+                          style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.black),
+                        ),
+                        Text(leg.selectionDescription, style: const TextStyle(fontSize: 12, color: Colors.black87)),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    margin: const EdgeInsets.symmetric(horizontal: 6),
+                    decoration: BoxDecoration(color: AccaColors.gold, borderRadius: BorderRadius.circular(6)),
+                    child: Text(decimalToFractional(leg.decimalOddsAtSelection), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+                  ),
+                  SizedBox(
+                    width: 78,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Challenge functionality is coming soon.')),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AccaColors.gold,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                      ),
+                      child: const Text('Challenge', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // State 3: no active gameweek — team summary.
+  Widget _noActiveGameWeekSummary() {
+    final top3 = fullTable.take(3).toList();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AccaColors.gold, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: const [Icon(Icons.emoji_events, color: AccaColors.primary, size: 18), SizedBox(width: 6), Text('Title Race', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black))]),
+          const SizedBox(height: 8),
+          if (top3.isEmpty)
+            const Text('No data yet.', style: TextStyle(color: Colors.black87))
+          else
+            for (int i = 0; i < top3.length; i++)
+              Text('${i + 1}. ${top3[i].displayName} — ${top3[i].totalBasePoints} pts', style: const TextStyle(color: Colors.black)),
+          if (myEntry != null && pointsOffThird != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              pointsOffThird! > 0
+                  ? 'You are $pointsOffThird points off 3rd place.'
+                  : pointsOffThird! < 0
+                      ? 'You are ${pointsOffThird!.abs()} points clear of 3rd place.'
+                      : 'You\'re level with 3rd place.',
+              style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.black),
+            ),
+          ],
+          const Divider(height: 28),
+          Row(children: const [Icon(Icons.bar_chart, color: AccaColors.primary, size: 18), SizedBox(width: 6), Text('Last Gameweek', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black))]),
+          const SizedBox(height: 8),
+          Text(
+            previousWeekTopScorer != null
+                ? '${previousWeekTopScorer!.name} top-scored with ${previousWeekTopScorer!.weightedPoints.toStringAsFixed(1)} weighted points.'
+                : 'No settled gameweeks yet.',
+            style: const TextStyle(color: Colors.black),
+          ),
+          const Divider(height: 28),
+          Row(children: const [Icon(Icons.gavel, color: AccaColors.primary, size: 18), SizedBox(width: 6), Text('Your Fines', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black))]),
+          const SizedBox(height: 8),
+          Text('$myOutstandingFines outstanding fine${myOutstandingFines == 1 ? '' : 's'}.', style: const TextStyle(color: Colors.black)),
+          const Divider(height: 28),
+          Row(children: const [Icon(Icons.campaign, color: AccaColors.primary, size: 18), SizedBox(width: 6), Text('Squad Activity', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black))]),
+          const SizedBox(height: 8),
+          if (recentFines.isEmpty)
+            const Text('Nothing recent.', style: TextStyle(color: Colors.black87))
+          else
+            for (final fine in recentFines)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Text('${fine.memberName} fined — ${fine.fineType.displayName}', style: const TextStyle(fontSize: 12, color: Colors.black87)),
+              ),
+        ],
       ),
     );
   }

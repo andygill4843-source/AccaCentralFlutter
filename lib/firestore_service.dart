@@ -25,6 +25,13 @@ class FirestoreService {
     }
     return teams;
   }
+ 
+  Future<void> markFinePaid(String fineId) async {
+    await _db.collection('fines').doc(fineId).update({
+      'paid': true,
+      'paidAt': DateTime.now(),
+    });
+  }
 
   Future<void> deleteLeg(String legId) async {
     await _db.collection('legs').doc(legId).delete();
@@ -38,6 +45,47 @@ class FirestoreService {
     final doc = await _db.collection('teams').doc(teamId).get();
     if (!doc.exists) return null;
     return Team.fromMap(doc.id, doc.data()!);
+  }
+
+  Future<List<Fine>> fetchFines(String teamId) async {
+    final snapshot = await _db.collection('fines').where('teamId', isEqualTo: teamId).get();
+    final fines = snapshot.docs.map((doc) => Fine.fromMap(doc.id, doc.data())).toList();
+
+    // Resolve any disputes whose 5-day window has passed — client-side
+    // check, run whenever anyone loads the fines list, since there's no
+    // scheduled backend job for this yet.
+    final now = DateTime.now();
+    for (final fine in fines) {
+      if (fine.status == FineStatus.disputed && fine.disputeDeadline != null && now.isAfter(fine.disputeDeadline!)) {
+        final upholdCount = fine.votes.values.where((v) => v == true).length;
+        final overturnCount = fine.votes.values.where((v) => v == false).length;
+        final finalStatus = upholdCount >= overturnCount ? FineStatus.upheld : FineStatus.overturned;
+        await _db.collection('fines').doc(fine.id).update({'status': finalStatus.value});
+      }
+    }
+
+    // Re-fetch so the returned list reflects any resolutions just applied.
+    final refreshed = await _db.collection('fines').where('teamId', isEqualTo: teamId).get();
+    return refreshed.docs.map((doc) => Fine.fromMap(doc.id, doc.data())).toList();
+  }
+
+  Future<void> createFine(Fine fine) async {
+    await _db.collection('fines').add(fine.toMap());
+  }
+
+  Future<void> respondToFine({required String fineId, required bool accept}) async {
+    if (accept) {
+      await _db.collection('fines').doc(fineId).update({'status': FineStatus.accepted.value});
+    } else {
+      await _db.collection('fines').doc(fineId).update({
+        'status': FineStatus.disputed.value,
+        'disputeDeadline': DateTime.now().add(const Duration(days: 5)),
+      });
+    }
+  }
+
+  Future<void> voteOnFine({required String fineId, required String memberId, required bool upholds}) async {
+    await _db.collection('fines').doc(fineId).update({'votes.$memberId': upholds});
   }
 
   Future<AccumulatorLeg?> fetchMemberLegForGameWeek({

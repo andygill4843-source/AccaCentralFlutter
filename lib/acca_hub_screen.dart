@@ -8,7 +8,10 @@ import 'current_leg_screen.dart';
 import 'live_accumulator_screen.dart';
 import 'manual_settlement_screen.dart';
 import 'accumulator_summary_screen.dart';
+import 'fines_screen.dart';
+import 'profile_screen.dart';
 import 'main.dart'; // for AccaColors
+import 'package:google_fonts/google_fonts.dart';
 
 class AccaHubScreen extends StatefulWidget {
   final AppState appState;
@@ -33,6 +36,14 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
   void initState() {
     super.initState();
     load();
+  }
+
+  @override
+  void didUpdateWidget(covariant AccaHubScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.teamId != widget.teamId) {
+      load();
+    }
   }
 
   Future<void> load() async {
@@ -163,15 +174,36 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     load();
   }
 
+  void openFines() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => FinesScreen(appState: widget.appState, teamId: widget.teamId)),
+    );
+  }
+
   String _formatDate(DateTime dt) => '${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Acca Hub'),
+        title: RichText(
+          text: TextSpan(
+            children: [
+              TextSpan(text: 'Acca ', style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600)),
+              TextSpan(text: 'Hub', style: GoogleFonts.poppins(color: AccaColors.gold, fontSize: 20, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.person),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => ProfileScreen(appState: widget.appState, teamId: widget.teamId)),
+            ),
+          ),
+        ],
       ),
       backgroundColor: AccaColors.background,
       body: isLoading
@@ -190,32 +222,26 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                           if (isManager)
                             Expanded(
                               child: _hubButton(
-                                icon: Icons.settings,
+                                icon: activeGameWeek != null ? Icons.flag : Icons.add_circle_outline,
                                 label: 'Gameweek manager',
-                                onTap: openGameWeekManager,
+                                onTap: activeGameWeek != null ? endGameWeek : openGameWeekManager,
                               ),
                             ),
-                          if (isManager && activeGameWeek != null && !activeGameWeek!.isSettled)
-                            const SizedBox(width: 12),
-                          if (isManager && activeGameWeek != null && !activeGameWeek!.isSettled)
-                            Expanded(
-                              child: _hubButton(
-                                icon: Icons.flag,
-                                label: 'End gameweek',
-                                onTap: endGameWeek,
-                              ),
-                            ),
+                          if (isManager) const SizedBox(width: 12),
+                          Expanded(
+                            child: _hubButton(icon: Icons.sports_soccer, label: 'Pick selection', onTap: openSubmitLeg),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
-                            child: _hubButton(icon: Icons.sports_soccer, label: 'Pick selection', onTap: openSubmitLeg),
+                            child: _hubButton(icon: Icons.live_tv, label: 'Live scores', onTap: openLiveView),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: _hubButton(icon: Icons.live_tv, label: 'Live scores', onTap: openLiveView),
+                            child: _hubButton(icon: Icons.gavel, label: 'Fines', onTap: openFines),
                           ),
                         ],
                       ),
@@ -243,32 +269,39 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
 
   Widget _gameWeekStatusCard() {
     if (activeGameWeek == null) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text('No active gameweek', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AccaColors.textSecondary)),
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AccaColors.gold, width: 1.5),
         ),
+        child: const Text('No active gameweek', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black)),
       );
     }
 
-    return Card(
-      color: AccaColors.primary,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Week ${activeGameWeek!.weekNumber}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-            if (activeGameWeek!.isLocked) ...[
-              const SizedBox(height: 4),
-              const Text('Locked', style: TextStyle(color: AccaColors.gold, fontSize: 13)),
-            ],
-            const SizedBox(height: 8),
-            Text('Coverage: $legCount/$memberCount picked', style: const TextStyle(color: Colors.white70, fontSize: 13)),
-            const SizedBox(height: 2),
-            Text('Deadline: ${_formatDate(activeGameWeek!.deadline)}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AccaColors.gold, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Week ${activeGameWeek!.weekNumber}', style: const TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.bold)),
+          if (activeGameWeek!.isLocked) ...[
+            const SizedBox(height: 4),
+            const Text('Locked', style: TextStyle(color: Colors.black87, fontSize: 13)),
           ],
-        ),
+          const SizedBox(height: 8),
+          Text('Coverage: $legCount/$memberCount picked', style: const TextStyle(color: Colors.black87, fontSize: 13)),
+          const SizedBox(height: 2),
+          Text('Deadline: ${_formatDate(activeGameWeek!.deadline)}', style: const TextStyle(color: Colors.black87, fontSize: 13)),
+        ],
       ),
     );
   }
@@ -280,16 +313,15 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
       child: Container(
         height: 90,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AccaColors.gold,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade300),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 32, color: AccaColors.primary),
+            Icon(icon, size: 32, color: Colors.black),
             const SizedBox(height: 8),
-            Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+            Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black)),
           ],
         ),
       ),

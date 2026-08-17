@@ -6,7 +6,6 @@ import 'league_table_tab.dart';
 import 'stats_screen.dart';
 import 'awards_screen.dart';
 import 'main.dart'; // for AccaColors
-import 'profile_screen.dart';
 
 class MainTabScaffold extends StatefulWidget {
   final AppState appState;
@@ -20,39 +19,78 @@ class MainTabScaffold extends StatefulWidget {
 
 class _MainTabScaffoldState extends State<MainTabScaffold> {
   int currentIndex = 0;
+    final Map<int, int> refreshTokens = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0};
+
+  void _select(int i) {
+    setState(() {
+      currentIndex = i;
+      refreshTokens[i] = (refreshTokens[i] ?? 0) + 1;
+    });
+  }
 
   void goToTab(int index) {
     setState(() => currentIndex = index);
   }
 
+  static const _items = [
+    (Icons.home, 'Home'),
+    (Icons.sports_soccer, 'Hub'),
+    (Icons.scoreboard, 'League'),
+    (Icons.bar_chart, 'Stats'),
+    (Icons.military_tech, 'Awards'),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final tabs = [
-      HomeScreen(appState: widget.appState, teamId: widget.teamId, onNavigateToTab: goToTab),
+      HomeScreen(appState: widget.appState, teamId: widget.teamId, onNavigateToTab: goToTab, refreshToken: refreshTokens[0]!),
       AccaHubScreen(appState: widget.appState, teamId: widget.teamId),
-      LeagueTableTab(teamId: widget.teamId),
-      StatsScreen(teamId: widget.teamId),
+      LeagueTableTab(teamId: widget.teamId, refreshToken: refreshTokens[2]!),
+      StatsScreen(appState: widget.appState, teamId: widget.teamId),
       AwardsScreen(appState: widget.appState, teamId: widget.teamId),
-      ProfileScreen(appState: widget.appState, teamId: widget.teamId),
     ];
 
     return Scaffold(
       body: IndexedStack(index: currentIndex, children: tabs),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: currentIndex,
-        onTap: (index) => setState(() => currentIndex = index),
-        selectedItemColor: AccaColors.gold,
-        unselectedItemColor: Colors.white70,
-        backgroundColor: AccaColors.primary,
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.sports_soccer), label: 'Acca Hub'),
-          BottomNavigationBarItem(icon: Icon(Icons.scoreboard), label: 'League'),
-          BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: 'Stats'),
-          BottomNavigationBarItem(icon: Icon(Icons.military_tech), label: 'Awards'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-        ],
+      bottomNavigationBar: SafeArea(
+        child: Container(
+          height: 60,
+          color: AccaColors.primary,
+          child: Row(
+            children: [
+              for (var i = 0; i < _items.length; i++)
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _select(i),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          top: BorderSide(
+                            color: currentIndex == i ? AccaColors.gold : Colors.transparent,
+                            width: 3,
+                          ),
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(_items[i].$1, color: currentIndex == i ? AccaColors.gold : Colors.white70, size: 24),
+                          const SizedBox(height: 2),
+                          Text(
+                            _items[i].$2,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: currentIndex == i ? AccaColors.gold : Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

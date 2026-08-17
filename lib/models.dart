@@ -233,6 +233,12 @@ enum BetType {
   correctScore,
   anytimeScorer,
   doubleChance,
+  halfTimeFullTime,
+  teamTotals,
+  bttsYesOverCombo,
+  bttsYesUnderCombo,
+  bttsNoOverCombo,
+  bttsNoUnderCombo,
   other,
 }
 
@@ -247,6 +253,12 @@ extension BetTypeValue on BetType {
       case BetType.correctScore: return 'Correct Score';
       case BetType.anytimeScorer: return 'Anytime Goalscorer';
       case BetType.doubleChance: return 'Double Chance';
+      case BetType.halfTimeFullTime: return 'Half Time / Full Time';
+      case BetType.teamTotals: return 'Team Goals Over/Under';
+      case BetType.bttsYesOverCombo: return 'BTTS & Over 2.5 (Estimate)';
+      case BetType.bttsYesUnderCombo: return 'BTTS & Under 2.5 (Estimate)';
+      case BetType.bttsNoOverCombo: return 'No BTTS & Over 2.5 (Estimate)';
+      case BetType.bttsNoUnderCombo: return 'No BTTS & Under 2.5 (Estimate)';
       case BetType.other: return 'Other';
     }
   }
@@ -397,6 +409,138 @@ class AccumulatorLeg {
       'totalBasePoints': totalBasePoints,
       'totalWeightedPoints': totalWeightedPoints,
       'endedAt': endedAt,
+    };
+  }
+}
+
+enum FineType { lateSelection, accaKiller, reminderTax, repeatOffender }
+
+extension FineTypeValue on FineType {
+  String get value {
+    switch (this) {
+      case FineType.lateSelection: return 'late_selection';
+      case FineType.accaKiller: return 'acca_killer';
+      case FineType.reminderTax: return 'reminder_tax';
+      case FineType.repeatOffender: return 'repeat_offender';
+    }
+  }
+
+  String get displayName {
+    switch (this) {
+      case FineType.lateSelection: return 'Late Selection Fine';
+      case FineType.accaKiller: return 'Acca Killer';
+      case FineType.reminderTax: return 'Reminder Tax';
+      case FineType.repeatOffender: return 'Repeat Offender';
+    }
+  }
+
+  static FineType fromValue(String? value) {
+    switch (value) {
+      case 'acca_killer': return FineType.accaKiller;
+      case 'reminder_tax': return FineType.reminderTax;
+      case 'repeat_offender': return FineType.repeatOffender;
+      default: return FineType.lateSelection;
+    }
+  }
+}
+
+enum FineStatus { pending, accepted, disputed, upheld, overturned }
+
+extension FineStatusValue on FineStatus {
+  String get value {
+    switch (this) {
+      case FineStatus.pending: return 'pending';
+      case FineStatus.accepted: return 'accepted';
+      case FineStatus.disputed: return 'disputed';
+      case FineStatus.upheld: return 'upheld';
+      case FineStatus.overturned: return 'overturned';
+    }
+  }
+
+  static FineStatus fromValue(String? value) {
+    switch (value) {
+      case 'accepted': return FineStatus.accepted;
+      case 'disputed': return FineStatus.disputed;
+      case 'upheld': return FineStatus.upheld;
+      case 'overturned': return FineStatus.overturned;
+      default: return FineStatus.pending;
+    }
+  }
+}
+
+class Fine {
+  final String? id;
+  final String teamId;
+  final String memberId; // who's being fined
+  final String memberName;
+  final FineType fineType;
+  final String reason;
+  final FineStatus status;
+  final String createdByMemberId;
+  final String createdByName;
+  final DateTime createdAt;
+  final DateTime? disputeDeadline;
+  final bool paid;
+  final DateTime? paidAt;
+  final Map<String, bool> votes; // memberId -> true (uphold) / false (overturn)
+
+  Fine({
+    this.id,
+    required this.teamId,
+    required this.memberId,
+    required this.memberName,
+    required this.fineType,
+    required this.reason,
+    required this.status,
+    required this.createdByMemberId,
+    required this.createdByName,
+    required this.createdAt,
+    this.disputeDeadline,
+    this.paid = false,
+    this.paidAt,
+    this.votes = const {},
+  });
+
+  /// Counts toward the tally from the moment it's placed, and stays on the
+  /// tally the whole way through — pending, accepted, or under dispute.
+  /// The only outcome that removes it is a successful dispute (Overturned);
+  /// Upheld or a tied vote leaves it counted.
+  bool get countsTowardTally => status != FineStatus.overturned && !paid;
+
+  factory Fine.fromMap(String id, Map<String, dynamic> map) {
+    return Fine(
+      id: id,
+      teamId: map['teamId'],
+      memberId: map['memberId'],
+      memberName: map['memberName'] ?? 'Unknown',
+      fineType: FineTypeValue.fromValue(map['fineType']),
+      reason: map['reason'] ?? '',
+      status: FineStatusValue.fromValue(map['status']),
+      createdByMemberId: map['createdByMemberId'],
+      createdByName: map['createdByName'] ?? 'Unknown',
+      createdAt: map['createdAt'].toDate(),
+      disputeDeadline: (map['disputeDeadline'] as dynamic)?.toDate(),
+      paid: map['paid'] ?? false,
+      paidAt: (map['paidAt'] as dynamic)?.toDate(),
+      votes: Map<String, bool>.from(map['votes'] ?? {}),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'teamId': teamId,
+      'memberId': memberId,
+      'memberName': memberName,
+      'fineType': fineType.value,
+      'reason': reason,
+      'status': status.value,
+      'createdByMemberId': createdByMemberId,
+      'createdByName': createdByName,
+      'createdAt': createdAt,
+      'disputeDeadline': disputeDeadline,
+      'votes': votes,
+      'paid': paid,
+      'paidAt': paidAt,
     };
   }
 }

@@ -94,6 +94,35 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /fines/{fineId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+
+      allow create: if isTeamManager(request.resource.data.teamId)
+        && request.resource.data.status == 'pending';
+
+      // The fined member can accept or dispute their own fine.
+      allow update: if isMemberOfTeam(resource.data.teamId)
+        && (
+          (ownsMemberDoc(resource.data.memberId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'disputeDeadline']))
+          ||
+          // Any team member can cast/change their own vote during a dispute.
+          (resource.data.status == 'disputed'
+            && !ownsMemberDoc(resource.data.memberId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votes']))
+          ||
+          // The 5-day auto-resolution check (runs client-side, any member can trigger it).
+          (resource.data.status == 'disputed'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']))
+          ||
+          // Manager confirming a fine has been paid.
+          (isTeamManager(resource.data.teamId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paid', 'paidAt']))
+        );
+
+      allow delete: if false;
+    }
+
     match /legs/{legId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
 

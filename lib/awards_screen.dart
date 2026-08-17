@@ -3,6 +3,8 @@ import 'app_state.dart';
 import 'awards_engine.dart';
 import 'firestore_service.dart';
 import 'main.dart'; // for AccaColors
+import 'profile_screen.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class AwardsScreen extends StatefulWidget {
   final AppState appState;
@@ -12,6 +14,8 @@ class AwardsScreen extends StatefulWidget {
 
   @override
   State<AwardsScreen> createState() => _AwardsScreenState();
+
+  
 }
 
 class _AwardsScreenState extends State<AwardsScreen> {
@@ -23,6 +27,20 @@ class _AwardsScreenState extends State<AwardsScreen> {
   void initState() {
     super.initState();
     load();
+  }
+
+  @override
+
+  void didUpdateWidget(covariant AwardsScreen oldWidget) {
+
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.teamId != widget.teamId) {
+
+      load();
+
+    }
+
   }
 
   Future<void> load() async {
@@ -57,9 +75,24 @@ class _AwardsScreenState extends State<AwardsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Awards'),
+        title: RichText(
+          text: TextSpan(
+            children: [
+              TextSpan(text: 'Awa', style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600)),
+              TextSpan(text: 'rds', style: GoogleFonts.poppins(color: AccaColors.gold, fontSize: 20, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
+	actions: [
+          IconButton(
+            icon: const Icon(Icons.person),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => ProfileScreen(appState: widget.appState, teamId: widget.teamId)),
+            ),
+          ),
+        ],
       ),
       backgroundColor: AccaColors.background,
       body: isLoading
