@@ -544,3 +544,98 @@ class Fine {
     };
   }
 }
+
+enum ChallengeStatus { active, resolved }
+
+extension ChallengeStatusValue on ChallengeStatus {
+  String get value => this == ChallengeStatus.active ? 'active' : 'resolved';
+  static ChallengeStatus fromValue(String? v) => v == 'resolved' ? ChallengeStatus.resolved : ChallengeStatus.active;
+}
+
+class Challenge {
+  final String? id;
+  final String teamId;
+  final String season;
+  final String gameWeekId;
+  final String challengerMemberId;
+  final String challengerName;
+  final String challengedMemberId;
+  final String challengedName;
+  final String challengedLegId;
+  final String challengedLegDescription;
+  final double challengedLegOdds;
+  final String? challengerLegId;
+  final String? challengerLegDescription;
+  final double? challengerLegOdds;
+  final ChallengeStatus status;
+  final bool? challengerWon; // null until resolved
+  final DateTime createdAt;
+
+  Challenge({
+    this.id,
+    required this.teamId,
+    required this.season,
+    required this.gameWeekId,
+    required this.challengerMemberId,
+    required this.challengerName,
+    required this.challengedMemberId,
+    required this.challengedName,
+    required this.challengedLegId,
+    required this.challengedLegDescription,
+    required this.challengedLegOdds,
+    this.challengerLegId,
+    this.challengerLegDescription,
+    this.challengerLegOdds,
+    required this.status,
+    this.challengerWon,
+    required this.createdAt,
+  });
+
+  /// The hypothetical win value of a leg at these odds — 3 base points,
+  /// plus weighted points the same way any winning leg is scored.
+  static double hypotheticalWeightedPoints(double odds) => (odds - 1) * 3;
+  static const int hypotheticalBasePoints = 3;
+
+  factory Challenge.fromMap(String id, Map<String, dynamic> map) {
+    return Challenge(
+      id: id,
+      teamId: map['teamId'],
+      season: map['season'] ?? '',
+      gameWeekId: map['gameWeekId'],
+      challengerMemberId: map['challengerMemberId'],
+      challengerName: map['challengerName'] ?? 'Unknown',
+      challengedMemberId: map['challengedMemberId'],
+      challengedName: map['challengedName'] ?? 'Unknown',
+      challengedLegId: map['challengedLegId'],
+      challengedLegDescription: map['challengedLegDescription'] ?? '',
+      challengedLegOdds: (map['challengedLegOdds'] as num?)?.toDouble() ?? 0,
+      challengerLegId: map['challengerLegId'],
+      challengerLegDescription: map['challengerLegDescription'],
+      challengerLegOdds: (map['challengerLegOdds'] as num?)?.toDouble(),
+      status: ChallengeStatusValue.fromValue(map['status']),
+      challengerWon: map['challengerWon'],
+      createdAt: map['createdAt'].toDate(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'teamId': teamId,
+      'season': season,
+      'gameWeekId': gameWeekId,
+      'challengerMemberId': challengerMemberId,
+      'challengerName': challengerName,
+      'challengedMemberId': challengedMemberId,
+      'challengedName': challengedName,
+      'challengedLegId': challengedLegId,
+      'challengedLegDescription': challengedLegDescription,
+      'challengedLegOdds': challengedLegOdds,
+      'challengerLegId': challengerLegId,
+      'challengerLegDescription': challengerLegDescription,
+      'challengerLegOdds': challengerLegOdds,
+      'status': status.value,
+      'challengerWon': challengerWon,
+      'createdAt': createdAt,
+    };
+  }
+}

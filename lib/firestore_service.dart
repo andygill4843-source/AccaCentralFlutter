@@ -17,6 +17,42 @@ class FirestoreService {
     return snapshot.docs.map((doc) => Member.fromMap(doc.id, doc.data())).toList();
   }
 
+  Future<void> createChallenge(Challenge challenge) async {
+    await _db.collection('challenges').add(challenge.toMap());
+  }
+
+  /// Resolves any active challenge whose challenged leg has now settled
+  /// (won/lost), same client-side-on-load pattern used for fine disputes.
+  Future<List<Challenge>> fetchChallenges({required String teamId, required String season}) async {
+    final snapshot = await _db.collection('challenges').where('teamId', isEqualTo: teamId).get();
+    final all = snapshot.docs.map((doc) => Challenge.fromMap(doc.id, doc.data())).toList();
+
+    final activeOnes = all.where((c) => c.status == ChallengeStatus.active).toList();
+    if (activeOnes.isNotEmpty) {
+      final legsSnapshot = await _db.collection('legs').where('teamId', isEqualTo: teamId).get();
+      final legsById = {for (final doc in legsSnapshot.docs) doc.id: doc.data()};
+
+      for (final challenge in activeOnes) {
+        final legData = legsById[challenge.challengedLegId];
+        if (legData == null) continue;
+        final outcome = LegOutcomeValue.fromValue(legData['outcome']);
+        if (outcome != LegOutcome.won && outcome != LegOutcome.lost) continue; // not settled yet
+
+        final challengedLegWon = outcome == LegOutcome.won;
+        final challengerWon = !challengedLegWon; // challenger wins the challenge if the challenged leg LOST
+        await _db.collection('challenges').doc(challenge.id).update({
+          'status': ChallengeStatus.resolved.value,
+          'challengerWon': challengerWon,
+        });
+      }
+
+      final refreshed = await _db.collection('challenges').where('teamId', isEqualTo: teamId).get();
+      return refreshed.docs.map((doc) => Challenge.fromMap(doc.id, doc.data())).toList();
+    }
+
+    return all;
+  }
+
   Future<List<Team>> fetchTeams(List<String> teamIds) async {
     final teams = <Team>[];
     for (final id in teamIds) {

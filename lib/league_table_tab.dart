@@ -50,7 +50,9 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
       final currentSeasonGameWeekIds = currentSeasonGameWeeks.map((g) => g.id).toSet();
       final currentSeasonLegs = legs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
 
-      final currentEntries = ScoringEngine.buildLeagueTable(members: members, legs: currentSeasonLegs);
+      final challenges = await FirestoreService.instance.fetchChallenges(teamId: widget.teamId, season: team?.season ?? '');
+
+      final currentEntries = ScoringEngine.buildLeagueTable(members: members, legs: currentSeasonLegs, challenges: challenges);
 
       final settledWeeks = currentSeasonGameWeeks.where((g) => g.isSettled).toList()
         ..sort((a, b) => a.weekNumber.compareTo(b.weekNumber));
@@ -60,7 +62,7 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
         final latestWeek = settledWeeks.last;
         final previousGameWeekIds = settledWeeks.where((g) => g.weekNumber < latestWeek.weekNumber).map((g) => g.id).toSet();
         final previousLegs = currentSeasonLegs.where((l) => previousGameWeekIds.contains(l.gameWeekId)).toList();
-        final previousEntries = ScoringEngine.buildLeagueTable(members: members, legs: previousLegs);
+        final previousEntries = ScoringEngine.buildLeagueTable(members: members, legs: previousLegs, challenges: challenges);
 
         final Map<String, int> previousPosition = {
           for (int i = 0; i < previousEntries.length; i++) previousEntries[i].memberId: i + 1,
@@ -81,7 +83,7 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
       for (final week in settledWeeks) {
         final upToWeekIds = settledWeeks.where((g) => g.weekNumber <= week.weekNumber).map((g) => g.id).toSet();
         final legsUpToWeek = currentSeasonLegs.where((l) => upToWeekIds.contains(l.gameWeekId)).toList();
-        history[week.weekNumber] = ScoringEngine.buildLeagueTable(members: members, legs: legsUpToWeek);
+        history[week.weekNumber] = ScoringEngine.buildLeagueTable(members: members, legs: legsUpToWeek, challenges: challenges);
       }
 
       setState(() {

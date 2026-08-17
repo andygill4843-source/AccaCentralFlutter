@@ -28,6 +28,7 @@ class ScoringEngine {
   static List<LeagueTableEntry> buildLeagueTable({
     required List<Member> members,
     required List<AccumulatorLeg> legs,
+    List<Challenge> challenges = const [],
   }) {
     final Map<String, List<AccumulatorLeg>> grouped = {};
     for (final leg in legs) {
@@ -43,8 +44,19 @@ class ScoringEngine {
           .toList()
         ..sort((a, b) => a.submittedAt.compareTo(b.submittedAt));
 
-      final totalBasePoints = settled.fold<int>(0, (sum, l) => sum + l.basePoints);
-      final totalWeightedPoints = settled.fold<double>(0, (sum, l) => sum + l.weightedPoints);
+      int totalBasePoints = settled.fold<int>(0, (sum, l) => sum + l.basePoints);
+      double totalWeightedPoints = settled.fold<double>(0, (sum, l) => sum + l.weightedPoints);
+
+      for (final challenge in challenges.where((c) => c.status == ChallengeStatus.resolved)) {
+        final challengerGetsBonus = challenge.challengerWon == true;
+        if (challengerGetsBonus && challenge.challengerMemberId == memberId) {
+          totalBasePoints += Challenge.hypotheticalBasePoints;
+          totalWeightedPoints += Challenge.hypotheticalWeightedPoints(challenge.challengedLegOdds);
+        } else if (!challengerGetsBonus && challenge.challengedMemberId == memberId && challenge.challengerLegOdds != null) {
+          totalBasePoints += Challenge.hypotheticalBasePoints;
+          totalWeightedPoints += Challenge.hypotheticalWeightedPoints(challenge.challengerLegOdds!);
+        }
+      }
       final legsWon = settled.where((l) => l.outcome == LegOutcome.won).length;
 
       final streaks = _computeStreaks(settled);

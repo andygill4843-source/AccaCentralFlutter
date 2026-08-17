@@ -6,6 +6,8 @@ import 'models.dart';
 import 'main.dart'; // for AccaColors
 import 'odds_format.dart';
 import 'profile_screen.dart';
+import 'place_challenge_screen.dart';
+import 'package:collection/collection.dart';
 
 class HomeScreen extends StatefulWidget {
   final AppState appState;
@@ -165,7 +167,8 @@ class _HomeScreenState extends State<HomeScreen> {
         automaticallyImplyLeading: false,
         centerTitle: false,
         titleSpacing: 16,
-        title: Image.asset('assets/images/logo_horizontal.png', height: 36, fit: BoxFit.contain),
+        toolbarHeight: 90,
+        title: Image.asset('assets/images/logo_horizontal.png', height: 56, fit: BoxFit.contain),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
         actions: [
@@ -333,11 +336,28 @@ class _HomeScreenState extends State<HomeScreen> {
                   SizedBox(
                     width: 78,
                     child: ElevatedButton(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Challenge functionality is coming soon.')),
-                        );
-                      },
+                      onPressed: currentMember?.id == leg.memberId
+                        ? null // can't challenge your own leg
+                        : () async {
+                            final myLeg = activeWeekLegs.where((l) => l.memberId == currentMember?.id).firstOrNull;
+                            final challengedName = members
+                                .firstWhere((m) => m.id == leg.memberId, orElse: () => Member(userId: '', displayName: 'Unknown', teamId: widget.teamId, joinedAt: DateTime.now()))
+                                .displayName;
+                            final placed = await Navigator.of(context).push<bool>(
+                              MaterialPageRoute(
+                                builder: (_) => PlaceChallengeScreen(
+                                  teamId: widget.teamId,
+                                  season: activeGameWeek?.season ?? '',
+                                  gameWeek: activeGameWeek!,
+                                  challengedLeg: leg,
+                                  challengedMemberName: challengedName,
+                                  challenger: currentMember!,
+                                  challengerLeg: myLeg,
+                                ),
+                              ),
+                            );
+                            if (placed == true) load();
+                          },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AccaColors.gold,
                         foregroundColor: Colors.black,

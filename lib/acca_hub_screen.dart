@@ -12,6 +12,7 @@ import 'fines_screen.dart';
 import 'profile_screen.dart';
 import 'main.dart'; // for AccaColors
 import 'package:google_fonts/google_fonts.dart';
+import 'challenges_screen.dart';
 
 class AccaHubScreen extends StatefulWidget {
   final AppState appState;
@@ -255,6 +256,20 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                             const SizedBox(width: 12),
                             Expanded(
                               child: _hubButton(icon: Icons.bar_chart, label: 'Odds selection', onTap: openAccumulatorSummary),
+                            ),
+                          ],
+                        ),
+			const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _hubButton(
+                                icon: Icons.flash_on,
+                                label: 'Challenges',
+                                onTap: () => Navigator.of(context).push(
+                                  MaterialPageRoute(builder: (_) => ChallengesScreen(teamId: widget.teamId)),
+                                ),
+                              ),
                             ),
                           ],
                         ),

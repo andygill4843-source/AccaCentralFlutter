@@ -42,6 +42,22 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /challenges/{challengeId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+
+      allow create: if isSignedIn()
+        && ownsMemberDoc(request.resource.data.challengerMemberId)
+        && isMemberOfTeam(request.resource.data.teamId)
+        && request.resource.data.status == 'active';
+
+      // Resolution runs client-side on load — any team member can trigger it.
+      allow update: if isMemberOfTeam(resource.data.teamId)
+        && resource.data.status == 'active'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'challengerWon']);
+
+      allow delete: if false;
+    }
+
     match /seasonWinners/{winnerId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
       allow create: if isTeamManager(request.resource.data.teamId);
