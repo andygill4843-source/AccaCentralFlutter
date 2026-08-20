@@ -28,7 +28,7 @@ class _PlaceFineScreenState extends State<PlaceFineScreen> {
   bool isSubmitting = false;
   String? errorMessage;
 
-  Future<void> submit() async {
+    Future<void> submit() async {
     if (selectedMember == null || selectedMember!.id == null || reasonController.text.trim().isEmpty) {
       setState(() => errorMessage = 'Select a member and enter a reason.');
       return;
@@ -37,7 +37,7 @@ class _PlaceFineScreenState extends State<PlaceFineScreen> {
       isSubmitting = true;
       errorMessage = null;
     });
-
+    final team = await FirestoreService.instance.fetchTeam(widget.teamId);
     final fine = Fine(
       id: null,
       teamId: widget.teamId,
@@ -49,10 +49,18 @@ class _PlaceFineScreenState extends State<PlaceFineScreen> {
       createdByMemberId: widget.createdByMemberId,
       createdByName: widget.createdByName,
       createdAt: DateTime.now(),
+      season: team?.season ?? 'Unknown Season',
     );
 
     try {
       await FirestoreService.instance.createFine(fine);
+      await FirestoreService.instance.sendNotification(
+        teamId: widget.teamId,
+        recipientMemberIds: [selectedMember!.id!],
+        type: NotificationType.fineIssued,
+        title: 'You\'ve been fined',
+        body: '${widget.createdByName} issued you a ${selectedType.displayName}.',
+      );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       setState(() {

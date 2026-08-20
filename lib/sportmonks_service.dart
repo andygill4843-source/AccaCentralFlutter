@@ -109,16 +109,26 @@ class SportmonksService {
 
   Future<List<SportmonksFixture>> fetchFixturesOnDate(DateTime date) async {
     final dateString = '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-    final uri = Uri.parse('$_baseUrl/fixtures/date/$dateString').replace(queryParameters: {
-      'api_token': _apiToken,
-      'include': 'participants;state',
-    });
-    final response = await http.get(uri);
-    if (response.statusCode != 200) {
-      throw Exception('Failed to load fixtures: ${response.statusCode}');
+    final List<SportmonksFixture> allFixtures = [];
+    int page = 1;
+    while (true) {
+      final uri = Uri.parse('$_baseUrl/fixtures/date/$dateString').replace(queryParameters: {
+        'api_token': _apiToken,
+        'include': 'participants;state',
+        'per_page': '50', // Sportmonks' max, cuts down the number of round trips
+        'page': '$page',
+      });
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Failed to load fixtures: ${response.statusCode}');
+      }
+      final json = jsonDecode(response.body);
+      final List<dynamic> data = json['data'];
+      allFixtures.addAll(data.map((f) => SportmonksFixture.fromJson(f)));
+      final hasMore = json['pagination']?['has_more'] == true;
+      if (!hasMore) break;
+      page++;
     }
-    final json = jsonDecode(response.body);
-    final List<dynamic> data = json['data'];
-    return data.map((f) => SportmonksFixture.fromJson(f)).toList();
+    return allFixtures;
   }
 }

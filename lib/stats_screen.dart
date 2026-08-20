@@ -7,6 +7,7 @@ import 'app_state.dart';
 import 'profile_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'odds_format.dart';
+import 'notifications_screen.dart';
 
 class StatsScreen extends StatefulWidget {
   final AppState appState;
@@ -27,6 +28,7 @@ class _StatsScreenState extends State<StatsScreen> {
   List<GameWeek> rawGameWeeks = [];
   List<SeasonWinner> rawSeasonWinners = [];
   String? teamCurrentSeason;
+  Member? currentMember;
 
   // Derived, recomputed whenever selectedSeason changes.
   List<LeagueTableEntry> entries = [];
@@ -38,6 +40,8 @@ class _StatsScreenState extends State<StatsScreen> {
 
   bool isLoading = true;
   String? errorMessage;
+
+  bool get isManager => currentMember?.role == MemberRole.manager;
 
   @override
   void initState() {
@@ -64,6 +68,10 @@ class _StatsScreenState extends State<StatsScreen> {
       final legs = await FirestoreService.instance.fetchLegs(widget.teamId);
       final gameWeeks = await FirestoreService.instance.fetchGameWeeks(widget.teamId);
       final seasonWinners = await FirestoreService.instance.fetchSeasonWinners(widget.teamId);
+      final userId = widget.appState.currentUser?.id;
+      if (userId != null) {
+      currentMember = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
+    }
 
       rawMembers = members;
       rawLegs = legs;
@@ -186,6 +194,14 @@ class _StatsScreenState extends State<StatsScreen> {
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: currentMember?.id == null
+                ? null
+                : () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
+                    ),
+          ),
           IconButton(
             icon: const Icon(Icons.person),
             onPressed: () => Navigator.of(context).push(

@@ -1,1 +1,39 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"accacentral","appId":"1:634734461787:android:1f041c495995670393d07e","fileOutput":"android/app/google-services.json"}},"ios":{"default":{"projectId":"accacentral","appId":"1:634734461787:ios:b5f8af1620c0973993d07e","uploadDebugSymbols":false,"fileOutput":"ios/Runner/GoogleService-Info.plist"}},"dart":{"lib/firebase_options.dart":{"projectId":"accacentral","configurations":{"android":"1:634734461787:android:1f041c495995670393d07e","ios":"1:634734461787:ios:b5f8af1620c0973993d07e"}}}}},"firestore":{"database":"(default)","location":"nam5","rules":"firestore.rules","indexes":"firestore.indexes.json"}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "accacentral",
+          "appId": "1:634734461787:android:1f041c495995670393d07e",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "accacentral",
+          "appId": "1:634734461787:ios:b5f8af1620c0973993d07e",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "accacentral",
+          "configurations": {
+            "android": "1:634734461787:android:1f041c495995670393d07e",
+            "ios": "1:634734461787:ios:b5f8af1620c0973993d07e"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "database": "(default)",
+    "location": "nam5",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "functions": {
+    "source": "functions"
+  }
+}

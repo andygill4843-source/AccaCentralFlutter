@@ -45,7 +45,7 @@ class _MainTabScaffoldState extends State<MainTabScaffold> {
     final tabs = [
       HomeScreen(appState: widget.appState, teamId: widget.teamId, onNavigateToTab: goToTab, refreshToken: refreshTokens[0]!),
       AccaHubScreen(appState: widget.appState, teamId: widget.teamId),
-      LeagueTableTab(teamId: widget.teamId, refreshToken: refreshTokens[2]!),
+      LeagueTableTab(appState: widget.appState, teamId: widget.teamId, refreshToken: refreshTokens[2]!),
       StatsScreen(appState: widget.appState, teamId: widget.teamId),
       AwardsScreen(appState: widget.appState, teamId: widget.teamId),
     ];

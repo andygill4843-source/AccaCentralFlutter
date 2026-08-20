@@ -34,6 +34,16 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
   Map<String, String> memberNames = {};
   bool isRejecting = false;
 
+    static const Map<String, String> _bookmakerHomepages = {
+    'Bet365': 'https://www.bet365.com',
+    'William Hill': 'https://sports.williamhill.com',
+    'Sky Bet': 'https://www.skybet.com',
+    'Paddy Power': 'https://www.paddypower.com',
+    'Betfair': 'https://betfair.com',
+    'Ladbrokes': 'https://ladbrokes.com',
+    'Coral': 'https://www.coral.co.uk',
+  };
+
   @override
   void initState() {
     super.initState();
@@ -61,11 +71,24 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     }
   }
 
+  Future<void> transferToBookmakerHomepage() async {
+    final url = selectedBookmaker != null ? _bookmakerHomepages[selectedBookmaker] : null;
+    if (url == null) return;
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
   Future<void> rejectLeg(AccumulatorLeg leg) async {
     if (leg.id == null) return;
     setState(() => isRejecting = true);
     try {
       await FirestoreService.instance.deleteLeg(leg.id!);
+      await FirestoreService.instance.sendNotification(
+        teamId: widget.gameWeek.teamId,
+        recipientMemberIds: [leg.memberId],
+        type: NotificationType.legRejected,
+        title: 'Leg rejected',
+        body: 'Your pick "${leg.selectionDescription}" was rejected for Gameweek ${widget.gameWeek.weekNumber} — please pick again before the deadline.',
+      );
       await load();
     } catch (e) {
       if (mounted) {
@@ -124,6 +147,8 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     setState(() => isSaving = true);
     try {
       await FirestoreService.instance.setGameWeekBookmaker(
+        teamId: widget.gameWeek.teamId,
+        weekNumber: widget.gameWeek.weekNumber,
         gameWeekId: widget.gameWeek.id!,
         bookmaker: option.bookmaker,
         combinedOdds: option.combinedOdds,
@@ -146,9 +171,9 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     }
   }
 
-  Future<void> offerTransfer(_BookmakerOption option) async {
+    Future<void> offerTransfer(_BookmakerOption option) async {
     final links = option.legLinks.where((pair) => pair.$2 != null).toList();
-
+    final homepageUrl = _bookmakerHomepages[option.bookmaker];
     final action = await showDialog<String>(
       context: context,
       barrierDismissible: false,
@@ -156,22 +181,23 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         title: const Text('Bookmaker selected'),
         content: Text(
           links.isEmpty
-              ? "No direct betslip links are available for ${option.bookmaker} on these legs, so transfer isn't available — you can remain on the app or return to pick a different bookmaker."
-              : 'You can transfer to ${option.bookmaker} with all legs opened there, or remain on the app with the odds locked in.',
+              ? "No direct betslip links are available for ${option.bookmaker} on these legs. You can open ${option.bookmaker}'s site directly, remain on the app, or return and reselect."
+              : "You can open each leg directly in ${option.bookmaker}, go to ${option.bookmaker}'s site, remain on the app with the odds locked in, or return and reselect.",
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, 'return'), child: const Text('Return')),
+          TextButton(onPressed: () => Navigator.pop(context, 'return'), child: const Text('Return and reselect')),
           if (links.isNotEmpty)
-            TextButton(onPressed: () => Navigator.pop(context, 'transfer'), child: Text('Transfer to ${option.bookmaker}')),
+            TextButton(onPressed: () => Navigator.pop(context, 'transfer'), child: Text('Open legs in ${option.bookmaker}')),
+          if (homepageUrl != null)
+            TextButton(onPressed: () => Navigator.pop(context, 'transferHomepage'), child: const Text('Transfer to bookmakers')),
           TextButton(onPressed: () => Navigator.pop(context, 'remain'), child: const Text('Remain on the app')),
         ],
       ),
     );
-
     switch (action) {
       case 'return':
         if (widget.gameWeek.id != null) {
-          await FirestoreService.instance.unlockGameWeek(widget.gameWeek.id!);
+          await FirestoreService.instance.unlockGameWeek(widget.gameWeek.id!, teamId: widget.gameWeek.teamId);
         }
         setState(() {
           selectedBookmaker = null;
@@ -184,6 +210,11 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
           final url = Uri.parse(pair.$2!);
           await launchUrl(url, mode: LaunchMode.externalApplication);
           await Future.delayed(const Duration(milliseconds: 800));
+        }
+        break;
+      case 'transferHomepage':
+        if (homepageUrl != null) {
+          await launchUrl(Uri.parse(homepageUrl), mode: LaunchMode.externalApplication);
         }
         break;
       case 'remain':
@@ -306,7 +337,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                           else
                             for (final option in bookmakerOptions) _bookmakerCard(option),
                         ],
-                        if (isLocked && selectedBookmaker != null) ...[
+                                                if (isLocked && selectedBookmaker != null) ...[
                           const SizedBox(height: 12),
                           Row(
                             children: [
@@ -327,6 +358,17 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                               ),
                             ],
                           ),
+                          if (_bookmakerHomepages[selectedBookmaker] != null) ...[
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                onPressed: transferToBookmakerHomepage,
+                                icon: const Icon(Icons.open_in_new),
+                                label: const Text('Transfer to bookmakers'),
+                              ),
+                            ),
+                          ],
                         ],
                       ],
                     ),

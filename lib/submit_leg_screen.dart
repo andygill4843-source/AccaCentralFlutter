@@ -36,6 +36,9 @@ class _SubmitLegScreenState
   static const Map<String, String> _leagueOptions = {
     'english premier': 'Premier League',
     'english championship': 'Championship',
+    'english league one': 'League One',
+    'english league two': 'League Two',
+    'fa cup': 'FA Cup',
     'champions league': 'Champions League',
     'la liga': 'La Liga',
     'serie a': 'Serie A',
@@ -53,6 +56,15 @@ class _SubmitLegScreenState
         SoccerLeague.premierLeague,
 
     'english championship':
+        null,
+
+    'english league one':
+        null,
+
+    'english league two':
+        null,
+
+    'fa cup':
         null,
 
     'champions league':

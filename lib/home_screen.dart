@@ -8,6 +8,10 @@ import 'odds_format.dart';
 import 'profile_screen.dart';
 import 'place_challenge_screen.dart';
 import 'package:collection/collection.dart';
+import 'notifications_screen.dart';
+import 'submission_gauge.dart';
+
+int unreadNotifications = 0;
 
 class HomeScreen extends StatefulWidget {
   final AppState appState;
@@ -39,6 +43,8 @@ class _HomeScreenState extends State<HomeScreen> {
   ({String name, double weightedPoints})? previousWeekTopScorer;
   int myOutstandingFines = 0;
   List<Fine> recentFines = [];
+  int myChallengesRemaining = 2;
+  int unreadNotifications = 0;
 
   @override
   void initState() {
@@ -54,10 +60,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void nudge(Member member) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Nudge sent to ${member.displayName}.')),
+  Future<void> nudge(Member member) async {
+    if (member.id == null) return;
+    await FirestoreService.instance.sendNotification(
+      teamId: widget.teamId,
+      recipientMemberIds: [member.id!],
+      type: NotificationType.nudge,
+      title: 'Nudge!',
+      body: '${currentMember?.displayName ?? 'A teammate'} nudged you to pick your leg before the deadline.',
     );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nudge sent to ${member.displayName}.')));
+    }
   }
 
   Future<void> load() async {
@@ -83,10 +97,20 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       }
 
+      final challenges = await FirestoreService.instance.fetchChallenges(teamId: widget.teamId, season: team?.season ?? '');
+      final myLosses = me?.id != null
+          ? challenges.where((c) => c.challengerMemberId == me!.id && c.status == ChallengeStatus.resolved && c.challengerWon == false).length
+          : 0;
+      final remaining = (2 - myLosses).clamp(0, 2);
+
+      final unreadCount = me?.id != null
+          ? await FirestoreService.instance.fetchUnreadNotificationCount(teamId: widget.teamId, memberId: me!.id!)
+          : 0;
+
       final currentSeasonGameWeeks = gameWeeks.where((g) => g.season == team?.season).toList();
       final currentSeasonGameWeekIds = currentSeasonGameWeeks.map((g) => g.id).toSet();
       final currentSeasonLegs = allLegs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
-      final table = ScoringEngine.buildLeagueTable(members: loadedMembers, legs: currentSeasonLegs);
+      final table = ScoringEngine.buildLeagueTable(members: loadedMembers, legs: currentSeasonLegs, challenges: challenges);
 
       LeagueTableEntry? mine;
       int? offThird;
@@ -145,6 +169,8 @@ class _HomeScreenState extends State<HomeScreen> {
           previousWeekTopScorer = topScorer;
           myOutstandingFines = myFineCount;
           recentFines = recent.take(5).toList();
+          myChallengesRemaining = remaining;
+          unreadNotifications = unreadCount;
           isLoading = false;
         });
       }
@@ -172,6 +198,21 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: Badge(
+              label: Text('$unreadNotifications'),
+              isLabelVisible: unreadNotifications > 0,
+              child: Icon(Icons.notifications_outlined, color: unreadNotifications > 0 ? AccaColors.gold : Colors.white),
+            ),
+            onPressed: currentMember?.id == null
+                ? null
+                : () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
+                    );
+                    load(); // refresh count after viewing
+                  },
+          ),
           IconButton(
             icon: const Icon(Icons.person),
             onPressed: () => Navigator.of(context).push(
@@ -219,64 +260,71 @@ class _HomeScreenState extends State<HomeScreen> {
     return _noActiveGameWeekSummary();
   }
 
-  // State 1: active gameweek, not yet locked — who's picked, who hasn't.
+    // State 1: active gameweek, not yet locked — who's picked, who hasn't.
   Widget _submissionStatusBox() {
     final deadline = activeGameWeek?.deadline;
     final within24h = deadline != null && deadline.isAfter(DateTime.now()) && deadline.difference(DateTime.now()).inHours <= 24;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AccaColors.gold, width: 1.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: const [
-              Icon(Icons.fact_check, color: AccaColors.primary, size: 18),
-              SizedBox(width: 6),
-              Text('Acca Selection Inspection', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black)),
+    final eligibleMembers = members.where((m) => m.id != null).toList();
+    final submittedCount = activeWeekLegs.map((l) => l.memberId).toSet().length;
+    return Column(
+      children: [
+        SubmissionGauge(submittedCount: submittedCount, totalMembers: eligibleMembers.length),
+        const SizedBox(height: 16),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AccaColors.gold, width: 1.5),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: const [
+                  Icon(Icons.fact_check, color: AccaColors.primary, size: 18),
+                  SizedBox(width: 6),
+                  Text('Acca Selection Inspection', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              for (final member in members)
+                if (member.id != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.sports_soccer, size: 16, color: AccaColors.gold),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(member.displayName, style: const TextStyle(color: Colors.black))),
+                        if (within24h && !activeWeekLegs.any((l) => l.memberId == member.id))
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: OutlinedButton(
+                              onPressed: () => nudge(member),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.black,
+                                side: const BorderSide(color: AccaColors.gold),
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: const Text('Nudge', style: TextStyle(fontSize: 12)),
+                            ),
+                          ),
+                        Icon(
+                          activeWeekLegs.any((l) => l.memberId == member.id) ? Icons.check_circle : Icons.cancel,
+                          color: activeWeekLegs.any((l) => l.memberId == member.id) ? AccaColors.win : AccaColors.loss,
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                  ),
             ],
           ),
-          const SizedBox(height: 12),
-          for (final member in members)
-            if (member.id != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(
-                  children: [
-                    const Icon(Icons.sports_soccer, size: 16, color: AccaColors.gold),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(member.displayName, style: const TextStyle(color: Colors.black))),
-                    if (within24h && !activeWeekLegs.any((l) => l.memberId == member.id))
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: OutlinedButton(
-                          onPressed: () => nudge(member),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.black,
-                            side: const BorderSide(color: AccaColors.gold),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          child: const Text('Nudge', style: TextStyle(fontSize: 12)),
-                        ),
-                      ),
-                    Icon(
-                      activeWeekLegs.any((l) => l.memberId == member.id) ? Icons.check_circle : Icons.cancel,
-                      color: activeWeekLegs.any((l) => l.memberId == member.id) ? AccaColors.win : AccaColors.loss,
-                      size: 20,
-                    ),
-                  ],
-                ),
-              ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -336,7 +384,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   SizedBox(
                     width: 78,
                     child: ElevatedButton(
-                      onPressed: currentMember?.id == leg.memberId
+                      onPressed: (currentMember?.id == leg.memberId || myChallengesRemaining <= 0)
                         ? null // can't challenge your own leg
                         : () async {
                             final myLeg = activeWeekLegs.where((l) => l.memberId == currentMember?.id).firstOrNull;
@@ -353,6 +401,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   challengedMemberName: challengedName,
                                   challenger: currentMember!,
                                   challengerLeg: myLeg,
+                                  challengesRemaining: myChallengesRemaining,
                                 ),
                               ),
                             );

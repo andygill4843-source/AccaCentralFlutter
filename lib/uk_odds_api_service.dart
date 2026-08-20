@@ -262,11 +262,23 @@ class UkOddsApiService {
         return api == 'bundesliga' ||
             api == 'german bundesliga';
 
-      case 'ligue 1':
+       case 'ligue 1':
         return api == 'ligue 1' ||
             api == 'french ligue 1';
 
-      default:
+       case 'english league one':
+       case 'league one':
+        return api == 'english league one';
+
+       case 'english league two':
+       case 'league two':
+        return api == 'english league two';
+      
+       case 'fa cup':
+        return api == 'fa cup' ||
+            api == 'english fa cup';
+      
+       default:
         return false;
     }
   }

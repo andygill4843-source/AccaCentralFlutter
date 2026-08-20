@@ -11,6 +11,7 @@ class PlaceChallengeScreen extends StatefulWidget {
   final String challengedMemberName;
   final Member challenger;
   final AccumulatorLeg? challengerLeg;
+  final int challengesRemaining;
 
   const PlaceChallengeScreen({
     super.key,
@@ -21,6 +22,7 @@ class PlaceChallengeScreen extends StatefulWidget {
     required this.challengedMemberName,
     required this.challenger,
     required this.challengerLeg,
+    required this.challengesRemaining,
   });
 
   @override
@@ -32,6 +34,10 @@ class _PlaceChallengeScreenState extends State<PlaceChallengeScreen> {
   String? errorMessage;
 
   Future<void> submit() async {
+    if (widget.challengesRemaining <= 0) {
+      setState(() => errorMessage = 'You have no challenges remaining this season.');
+      return;
+    }
     if (DateTime.now().isAfter(widget.challengedLeg.kickoff)) {
       setState(() => errorMessage = 'Too late — this leg has already kicked off.');
       return;
@@ -67,8 +73,6 @@ class _PlaceChallengeScreenState extends State<PlaceChallengeScreen> {
 
     try {
       await FirestoreService.instance.createChallenge(challenge);
-      // Notifications aren't built yet — everyone should be notified once
-      // that system exists; for now this is a silent placement.
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       setState(() {
@@ -101,6 +105,8 @@ class _PlaceChallengeScreenState extends State<PlaceChallengeScreen> {
               'If this leg loses, you get its hypothetical win value added to your score. If it wins, they get your own leg\'s hypothetical win value instead — win or lose your own bet.',
               style: TextStyle(color: Colors.white70, fontSize: 13),
             ),
+            const SizedBox(height: 16),
+            Text('Challenges remaining: ${widget.challengesRemaining}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
             if (errorMessage != null) ...[
               const SizedBox(height: 16),
               Text(errorMessage!, style: const TextStyle(color: Colors.red)),

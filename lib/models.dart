@@ -479,6 +479,7 @@ class Fine {
   final String createdByMemberId;
   final String createdByName;
   final DateTime createdAt;
+  final String season;
   final DateTime? disputeDeadline;
   final bool paid;
   final DateTime? paidAt;
@@ -495,6 +496,7 @@ class Fine {
     required this.createdByMemberId,
     required this.createdByName,
     required this.createdAt,
+    required this.season,
     this.disputeDeadline,
     this.paid = false,
     this.paidAt,
@@ -519,6 +521,7 @@ class Fine {
       createdByMemberId: map['createdByMemberId'],
       createdByName: map['createdByName'] ?? 'Unknown',
       createdAt: map['createdAt'].toDate(),
+      season: map['season'] ?? 'Unknown Season', // fines placed before this field existed
       disputeDeadline: (map['disputeDeadline'] as dynamic)?.toDate(),
       paid: map['paid'] ?? false,
       paidAt: (map['paidAt'] as dynamic)?.toDate(),
@@ -537,6 +540,7 @@ class Fine {
       'createdByMemberId': createdByMemberId,
       'createdByName': createdByName,
       'createdAt': createdAt,
+      'season': season,
       'disputeDeadline': disputeDeadline,
       'votes': votes,
       'paid': paid,
@@ -636,6 +640,61 @@ class Challenge {
       'status': status.value,
       'challengerWon': challengerWon,
       'createdAt': createdAt,
+    };
+  }
+}
+
+enum NotificationType { deadlineReminder, legRejected, fineIssued, fineDisputeVote, disputeResolved, nudge, challengePlaced, challengeResolved, gameweekLocked, leaguePosition, newGameweek }
+
+extension NotificationTypeValue on NotificationType {
+  String get value => toString().split('.').last;
+  static NotificationType fromValue(String? v) =>
+      NotificationType.values.firstWhere((t) => t.value == v, orElse: () => NotificationType.deadlineReminder);
+}
+
+class AppNotification {
+  final String? id;
+  final String teamId;
+  final String recipientMemberId;
+  final NotificationType type;
+  final String title;
+  final String body;
+  final DateTime createdAt;
+  final bool read;
+
+  AppNotification({
+    this.id,
+    required this.teamId,
+    required this.recipientMemberId,
+    required this.type,
+    required this.title,
+    required this.body,
+    required this.createdAt,
+    this.read = false,
+  });
+
+  factory AppNotification.fromMap(String id, Map<String, dynamic> map) {
+    return AppNotification(
+      id: id,
+      teamId: map['teamId'],
+      recipientMemberId: map['recipientMemberId'],
+      type: NotificationTypeValue.fromValue(map['type']),
+      title: map['title'] ?? '',
+      body: map['body'] ?? '',
+      createdAt: map['createdAt'].toDate(),
+      read: map['read'] ?? false,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'teamId': teamId,
+      'recipientMemberId': recipientMemberId,
+      'type': type.value,
+      'title': title,
+      'body': body,
+      'createdAt': createdAt,
+      'read': read,
     };
   }
 }

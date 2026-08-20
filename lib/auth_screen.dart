@@ -27,6 +27,71 @@ class _AuthScreenState extends State<AuthScreen> {
   bool rememberMe = true;
   bool isLoading = false;
   String? errorMessage;
+  
+
+    Future<void> _showForgotPasswordDialog() async {
+    final identifierController = TextEditingController();
+    bool dialogLoading = false;
+    String? dialogError;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Reset your password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Enter your username or email and we\'ll send you a reset link.', style: TextStyle(fontSize: 13)),
+              const SizedBox(height: 12),
+              TextField(
+                controller: identifierController,
+                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Username or email'),
+              ),
+              if (dialogError != null) ...[
+                const SizedBox(height: 8),
+                Text(dialogError!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: dialogLoading ? null : () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: dialogLoading
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        dialogLoading = true;
+                        dialogError = null;
+                      });
+                      try {
+                        await AuthService.instance.resetPassword(identifierController.text.trim());
+                        if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text("If an account exists, we've sent a reset link.")),
+                          );
+                        }
+                      } catch (e) {
+                        setDialogState(() {
+                          dialogError = e.toString().replaceFirst('AuthException: ', '');
+                          dialogLoading = false;
+                        });
+                      }
+                    },
+              child: dialogLoading
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Send reset link'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +142,14 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                     const Text('Remember me'),
                   ],
+                ),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: isLoading ? null : _showForgotPasswordDialog,
+                    child: const Text('Forgotten password?', style: TextStyle(color: AccaColors.gold, fontSize: 13)),
+                  ),
                 ),
               ],
               if (errorMessage != null) ...[

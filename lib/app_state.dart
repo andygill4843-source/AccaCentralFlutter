@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
 import 'models.dart';
+import 'notification_service.dart';
 
 enum AppScreen { splash, auth, teamSetup, main }
 
@@ -27,6 +28,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _captureNotificationToken() {
+    final userId = currentUser?.id;
+    if (userId != null) {
+      NotificationService.instance.initAndSaveToken(userId);
+    }
+  }
+
   Future<void> resolveAuthState() async {
     final remember = await rememberMe;
     if (!remember) {
@@ -45,6 +53,7 @@ class AppState extends ChangeNotifier {
       currentUser = user;
       activeTeamId = user.teamIds.isNotEmpty ? user.teamIds.first : null;
       screen = user.teamIds.isEmpty ? AppScreen.teamSetup : AppScreen.main;
+      _captureNotificationToken();
     } catch (_) {
       screen = AppScreen.auth;
     }
@@ -55,18 +64,17 @@ class AppState extends ChangeNotifier {
     currentUser = user;
     activeTeamId = user.teamIds.isNotEmpty ? user.teamIds.first : null;
     screen = user.teamIds.isEmpty ? AppScreen.teamSetup : AppScreen.main;
+    _captureNotificationToken();
     notifyListeners();
   }
 
   void didJoinOrCreateTeam(AppUser updatedUser) {
     currentUser = updatedUser;
-    // Only switch active team automatically if this was the very first team
-    // (initial setup) — for an additional team joined/created later, the
-    // caller decides whether to switch (see ProfileScreen).
     if (activeTeamId == null && updatedUser.teamIds.isNotEmpty) {
       activeTeamId = updatedUser.teamIds.first;
     }
     screen = AppScreen.main;
+    _captureNotificationToken();
     notifyListeners();
   }
 

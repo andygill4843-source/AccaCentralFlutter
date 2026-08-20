@@ -1,3 +1,4 @@
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'models.dart';
 import 'package:uuid/uuid.dart';
@@ -24,28 +25,36 @@ class FirestoreService {
   /// Resolves any active challenge whose challenged leg has now settled
   /// (won/lost), same client-side-on-load pattern used for fine disputes.
   Future<List<Challenge>> fetchChallenges({required String teamId, required String season}) async {
-    final snapshot = await _db.collection('challenges').where('teamId', isEqualTo: teamId).get();
+    final snapshot = await _db.collection('challenges').where('teamId', isEqualTo: teamId).where('season', isEqualTo: season).get();
     final all = snapshot.docs.map((doc) => Challenge.fromMap(doc.id, doc.data())).toList();
 
     final activeOnes = all.where((c) => c.status == ChallengeStatus.active).toList();
     if (activeOnes.isNotEmpty) {
       final legsSnapshot = await _db.collection('legs').where('teamId', isEqualTo: teamId).get();
       final legsById = {for (final doc in legsSnapshot.docs) doc.id: doc.data()};
-
+      final teamMembers = await fetchMembers(teamId);
+      final memberIds = [for (final m in teamMembers) if (m.id != null) m.id!];
       for (final challenge in activeOnes) {
         final legData = legsById[challenge.challengedLegId];
         if (legData == null) continue;
         final outcome = LegOutcomeValue.fromValue(legData['outcome']);
         if (outcome != LegOutcome.won && outcome != LegOutcome.lost) continue; // not settled yet
-
         final challengedLegWon = outcome == LegOutcome.won;
         final challengerWon = !challengedLegWon; // challenger wins the challenge if the challenged leg LOST
         await _db.collection('challenges').doc(challenge.id).update({
           'status': ChallengeStatus.resolved.value,
           'challengerWon': challengerWon,
         });
+        await sendNotification(
+          teamId: teamId,
+          recipientMemberIds: memberIds,
+          type: NotificationType.challengeResolved,
+          title: challengerWon ? 'CHALLENGE CHAMPION' : 'CHALLENGE LOST',
+          body: challengerWon
+              ? '${challenge.challengerName} called it and it doesn\'t look like ${challenge.challengedName} has what it takes!'
+              : 'That ages well! Too big for your boots ${challenge.challengerName}. Enjoy the points ${challenge.challengedName}.',
+        );
       }
-
       final refreshed = await _db.collection('challenges').where('teamId', isEqualTo: teamId).get();
       return refreshed.docs.map((doc) => Challenge.fromMap(doc.id, doc.data())).toList();
     }
@@ -60,6 +69,50 @@ class FirestoreService {
       if (team != null) teams.add(team);
     }
     return teams;
+  }
+
+  /// Writes one notification doc per recipient — the Cloud Function
+  /// (notifications.js) picks each one up via onCreate and sends the
+  /// actual push. This call itself is what powers the in-app bell list.
+  Future<void> sendNotification({
+    required String teamId,
+    required List<String> recipientMemberIds,
+    required NotificationType type,
+    required String title,
+    required String body,
+  }) async {
+    final batch = _db.batch();
+    for (final memberId in recipientMemberIds) {
+      final ref = _db.collection('notifications').doc();
+      batch.set(ref, AppNotification(
+        teamId: teamId,
+        recipientMemberId: memberId,
+        type: type,
+        title: title,
+        body: body,
+        createdAt: DateTime.now(),
+      ).toMap());
+    }
+    await batch.commit();
+  }
+
+  Future<List<AppNotification>> fetchNotifications({required String teamId, required String memberId}) async {
+    final snapshot = await _db
+        .collection('notifications')
+        .where('teamId', isEqualTo: teamId)
+        .where('recipientMemberId', isEqualTo: memberId)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .get();
+    return snapshot.docs.map((doc) => AppNotification.fromMap(doc.id, doc.data())).toList();
+  }
+
+  Future<void> markNotificationRead(String id) async {
+    await _db.collection('notifications').doc(id).update({'read': true});
+  }
+
+  Future<void> saveFcmToken({required String userId, required String token}) async {
+    await _db.collection('users').doc(userId).update({'fcmToken': token});
   }
  
   Future<void> markFinePaid(String fineId) async {
@@ -97,6 +150,15 @@ class FirestoreService {
         final overturnCount = fine.votes.values.where((v) => v == false).length;
         final finalStatus = upholdCount >= overturnCount ? FineStatus.upheld : FineStatus.overturned;
         await _db.collection('fines').doc(fine.id).update({'status': finalStatus.value});
+        await sendNotification(
+          teamId: teamId,
+          recipientMemberIds: [fine.memberId],
+          type: NotificationType.disputeResolved,
+          title: 'Dispute resolved',
+          body: finalStatus == FineStatus.overturned
+              ? 'Your dispute of the ${fine.fineType.displayName} fine was successful — it has been overturned.'
+              : 'Your dispute of the ${fine.fineType.displayName} fine was unsuccessful — the fine has been upheld.',
+        );
       }
     }
 
@@ -122,6 +184,16 @@ class FirestoreService {
 
   Future<void> voteOnFine({required String fineId, required String memberId, required bool upholds}) async {
     await _db.collection('fines').doc(fineId).update({'votes.$memberId': upholds});
+  }
+
+  Future<int> fetchUnreadNotificationCount({required String teamId, required String memberId}) async {
+    final snapshot = await _db
+        .collection('notifications')
+        .where('teamId', isEqualTo: teamId)
+        .where('recipientMemberId', isEqualTo: memberId)
+        .where('read', isEqualTo: false)
+        .get();
+    return snapshot.docs.length;
   }
 
   Future<AccumulatorLeg?> fetchMemberLegForGameWeek({
@@ -154,13 +226,14 @@ class FirestoreService {
   }
 
   Future<void> setGameWeekBookmaker({
+    required String teamId,
+    required int weekNumber,
     required String gameWeekId,
     required String bookmaker,
     required double combinedOdds,
     required List<AccumulatorLeg> legs,
   }) async {
     final gameWeekRef = _db.collection('gameWeeks').doc(gameWeekId);
-
     await _db.runTransaction((transaction) async {
       for (final leg in legs) {
         if (leg.id == null) continue;
@@ -174,27 +247,36 @@ class FirestoreService {
           'preLockBookmaker': leg.bookmaker,
         });
       }
-
       transaction.update(gameWeekRef, {
         'selectedBookmaker': bookmaker,
         'combinedOdds': combinedOdds,
         'isLocked': true,
       });
     });
+
+    final members = await fetchMembers(teamId);
+    await sendNotification(
+      teamId: teamId,
+      recipientMemberIds: [for (final m in members) if (m.id != null) m.id!],
+      type: NotificationType.gameweekLocked,
+      title: 'Gameweek locked',
+      body: 'Gameweek $weekNumber is locked in with $bookmaker — combined odds ${combinedOdds.toStringAsFixed(2)}.',
+    );
   }
 
-  Future<void> unlockGameWeek(String gameWeekId) async {
+    Future<void> unlockGameWeek(String gameWeekId, {required String teamId}) async {
     final gameWeekRef = _db.collection('gameWeeks').doc(gameWeekId);
-
     await _db.runTransaction((transaction) async {
-      final legsSnap = await _db.collection('legs').where('gameWeekId', isEqualTo: gameWeekId).get();
-
+      final legsSnap = await _db
+          .collection('legs')
+          .where('teamId', isEqualTo: teamId)
+          .where('gameWeekId', isEqualTo: gameWeekId)
+          .get();
       transaction.update(gameWeekRef, {
         'selectedBookmaker': null,
         'combinedOdds': null,
         'isLocked': false,
       });
-
       for (final doc in legsSnap.docs) {
         final data = doc.data();
         final preLockOdds = data['preLockOddsAtSelection'];
@@ -256,10 +338,59 @@ class FirestoreService {
     final teamDoc = await _db.collection('teams').doc(teamId).get();
     final activeId = teamDoc.data()?['activeGameWeekId'] as String?;
     if (activeId == null) return null;
-
     final gwDoc = await _db.collection('gameWeeks').doc(activeId).get();
     if (!gwDoc.exists) return null;
-    return GameWeek.fromMap(gwDoc.id, gwDoc.data()!);
+    final gameWeek = GameWeek.fromMap(gwDoc.id, gwDoc.data()!);
+
+    // Lazy-check: fires whether the last leg settled manually
+    // (updateLegOutcome) or via the settleLegs.js Cloud Function — same
+    // pattern already used for fine disputes and challenges.
+    if (!gameWeek.isSettled) {
+      final legsSnap = await _db.collection('legs').where('teamId', isEqualTo: teamId).where('gameWeekId', isEqualTo: activeId).get();
+      final legs = legsSnap.docs.map((d) => AccumulatorLeg.fromMap(d.id, d.data())).toList();
+      final allSettled = legs.isNotEmpty && legs.every((l) => l.outcome != LegOutcome.pending);
+      if (allSettled) {
+        await _finishGameWeekAndNotify(teamId: teamId, gameWeek: gameWeek);
+        return null; // it just finished — there's no active gameweek anymore
+      }
+    }
+    return gameWeek;
+  }
+
+  Future<void> _finishGameWeekAndNotify({required String teamId, required GameWeek gameWeek}) async {
+    if (gameWeek.id == null) return;
+    await settleGameWeek(teamId: teamId, gameWeekId: gameWeek.id!);
+
+    final team = await fetchTeam(teamId);
+    final season = team?.season ?? gameWeek.season;
+    final members = await fetchMembers(teamId);
+    final allLegs = await fetchLegs(teamId);
+    final gameWeeks = await fetchGameWeeks(teamId);
+    final seasonGameWeekIds = gameWeeks.where((g) => g.season == season).map((g) => g.id).toSet();
+    final seasonLegs = allLegs.where((l) => seasonGameWeekIds.contains(l.gameWeekId)).toList();
+    final challenges = await fetchChallenges(teamId: teamId, season: season);
+    final table = ScoringEngine.buildLeagueTable(members: members, legs: seasonLegs, challenges: challenges);
+
+    for (int i = 0; i < table.length; i++) {
+      final entry = table[i];
+      await sendNotification(
+        teamId: teamId,
+        recipientMemberIds: [entry.memberId],
+        type: NotificationType.leaguePosition,
+        title: 'Gameweek ${gameWeek.weekNumber} settled',
+        body: "All legs are in for Gameweek ${gameWeek.weekNumber} — you're now ${_ordinal(i + 1)} in the table.",
+      );
+    }
+  }
+
+  String _ordinal(int n) {
+    if (n % 100 >= 11 && n % 100 <= 13) return '${n}th';
+    switch (n % 10) {
+      case 1: return '${n}st';
+      case 2: return '${n}nd';
+      case 3: return '${n}rd';
+      default: return '${n}th';
+    }
   }
 
   Future<void> submitLeg(AccumulatorLeg leg) async {
@@ -282,7 +413,6 @@ class FirestoreService {
   Future<void> createGameWeek(GameWeek gameWeek) async {
     final teamRef = _db.collection('teams').doc(gameWeek.teamId);
     final gameWeekRef = _db.collection('gameWeeks').doc();
-
     await _db.runTransaction((transaction) async {
       final teamSnap = await transaction.get(teamRef);
       final activeId = teamSnap.data()?['activeGameWeekId'] as String?;
@@ -292,6 +422,15 @@ class FirestoreService {
       transaction.set(gameWeekRef, gameWeek.toMap());
       transaction.update(teamRef, {'activeGameWeekId': gameWeekRef.id});
     });
+
+    final members = await fetchMembers(gameWeek.teamId);
+    await sendNotification(
+      teamId: gameWeek.teamId,
+      recipientMemberIds: [for (final m in members) if (m.id != null) m.id!],
+      type: NotificationType.newGameweek,
+      title: 'New gameweek',
+      body: 'Gameweek ${gameWeek.weekNumber} is open — get your pick in before the deadline.',
+    );
   }
 
   /// Marks a gameweek settled and clears the team's active pointer, so a

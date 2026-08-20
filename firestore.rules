@@ -58,6 +58,14 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /notifications/{notificationId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+      allow create: if isMemberOfTeam(request.resource.data.teamId);
+      allow update: if isMemberOfTeam(resource.data.teamId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if false;
+    }
+
     match /seasonWinners/{winnerId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
       allow create: if isTeamManager(request.resource.data.teamId);

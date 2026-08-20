@@ -13,6 +13,7 @@ import 'profile_screen.dart';
 import 'main.dart'; // for AccaColors
 import 'package:google_fonts/google_fonts.dart';
 import 'challenges_screen.dart';
+import 'notifications_screen.dart';
 
 class AccaHubScreen extends StatefulWidget {
   final AppState appState;
@@ -198,6 +199,14 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: currentMember?.id == null
+                ? null
+                : () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
+                    ),
+          ),
           IconButton(
             icon: const Icon(Icons.person),
             onPressed: () => Navigator.of(context).push(

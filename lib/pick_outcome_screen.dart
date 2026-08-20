@@ -169,9 +169,10 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       isSubmitting = true;
       errorMessage = null;
     });
-
-    final selectionDescription = '${outcome.name} — ${widget.fixture.homeTeam} vs ${widget.fixture.awayTeam}';
-
+    final pickLabel = (outcome.line != null && !outcome.name.toLowerCase().contains(outcome.line!.toLowerCase()))
+        ? '${outcome.name} ${outcome.line}'
+        : outcome.name;
+    final selectionDescription = '$pickLabel — ${widget.fixture.homeTeam} vs ${widget.fixture.awayTeam}';
     try {
       final sportmonksId = await FixtureMatchingService.resolveSportmonksFixtureId(
         homeTeam: widget.fixture.homeTeam,
