@@ -132,11 +132,11 @@ class _AwardsScreenState extends State<AwardsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: RichText(
+                title: RichText(
           text: TextSpan(
             children: [
-              TextSpan(text: 'Awa', style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600)),
-              TextSpan(text: 'rds', style: GoogleFonts.poppins(color: AccaColors.gold, fontSize: 20, fontWeight: FontWeight.w600)),
+              TextSpan(text: 'Trophy ', style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600)),
+              TextSpan(text: 'Cabinet', style: GoogleFonts.poppins(color: const Color(0xFF00E676), fontSize: 20, fontWeight: FontWeight.w600)),
             ],
           ),
         ),

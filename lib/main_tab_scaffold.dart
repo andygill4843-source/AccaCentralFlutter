@@ -36,8 +36,8 @@ class _MainTabScaffoldState extends State<MainTabScaffold> {
     (Icons.home, 'Home'),
     (Icons.sports_soccer, 'Hub'),
     (Icons.scoreboard, 'League'),
-    (Icons.bar_chart, 'Stats'),
-    (Icons.military_tech, 'Awards'),
+    (Icons.bar_chart, 'Performance'),
+    (Icons.military_tech, 'Trophies'),
   ];
 
   @override

@@ -14,11 +14,12 @@ function determineOutcome(leg, homeTeam, awayTeam, homeGoals, awayGoals, homeHTG
   // selectionDescription is "{pick} — {home} vs {away}" — the fixture suffix
   // always contains both team names, so matching the full string made every
   // home-team check true regardless of what was actually picked.
-  const selectionPart = leg.selectionDescription.split(' — ')[0] || '';
+  // Split tolerantly on either a spaced em-dash or a spaced hyphen — a real
+  // Half Time/Full Time example came through using a plain " - " separator.
+  const selectionPart = leg.selectionDescription.split(/\s[-—]\s/)[0] || '';
   const selection = selectionPart.toLowerCase();
   const home = homeTeam.toLowerCase();
   const away = awayTeam.toLowerCase();
-
   if (leg.betType === "Match Winner") {
     const homeWon = homeGoals > awayGoals;
     const awayWon = awayGoals > homeGoals;
@@ -28,7 +29,6 @@ function determineOutcome(leg, homeTeam, awayTeam, homeGoals, awayGoals, homeHTG
     if (selection.includes("draw")) return isDraw ? "won" : "lost";
     return "pending";
   }
-
   if (leg.betType === "Over/Under Goals") {
     const totalGoals = homeGoals + awayGoals;
     const match = selection.match(/(\d+(\.\d+)?)/);
@@ -38,14 +38,12 @@ function determineOutcome(leg, homeTeam, awayTeam, homeGoals, awayGoals, homeHTG
     if (selection.includes("under")) return totalGoals < line ? "won" : "lost";
     return "pending";
   }
-
   if (leg.betType === "Both Teams to Score") {
     const bothScored = homeGoals > 0 && awayGoals > 0;
     if (selection.startsWith("yes")) return bothScored ? "won" : "lost";
     if (selection.startsWith("no")) return bothScored ? "lost" : "won";
     return "pending";
   }
-
   if (leg.betType === "Draw No Bet") {
     const isDraw = homeGoals === awayGoals;
     if (isDraw) return "void"; // stake refunded — doesn't count as played or won
@@ -54,7 +52,6 @@ function determineOutcome(leg, homeTeam, awayTeam, homeGoals, awayGoals, homeHTG
     if (selection.includes(away)) return !homeWon ? "won" : "lost";
     return "pending";
   }
-
   if (leg.betType === "Handicap") {
     const match = selection.match(/([+-]?\d+(\.\d+)?)/);
     if (!match) return "pending";
@@ -72,7 +69,35 @@ function determineOutcome(leg, homeTeam, awayTeam, homeGoals, awayGoals, homeHTG
     if (adjustedTeamScore === opponentScore) return "void"; // push
     return adjustedTeamScore > opponentScore ? "won" : "lost";
   }
-
+  if (leg.betType === "Correct Score") {
+    // Real example: "Coventry 3-2 — Arsenal vs Coventry". The scoreline
+    // digits are what matter, not whatever label precedes them (this API
+    // seems to label the selection with a team name that isn't necessarily
+    // meaningful here) — matching the H-A digit pattern anywhere in the
+    // selection text works regardless of that prefix.
+    const match = selection.match(/(\d+)\s*-\s*(\d+)/);
+    if (!match) return "pending";
+    const predictedHome = parseInt(match[1], 10);
+    const predictedAway = parseInt(match[2], 10);
+    return (homeGoals === predictedHome && awayGoals === predictedAway) ? "won" : "lost";
+  }
+  if (leg.betType === "Double Chance") {
+    // Real example: "Crystal Palace-Draw — Everton vs Crystal Palace".
+    // Checking which two of {home, away, draw} are actually named, rather
+    // than splitting on the hyphen, avoids breaking on any team name that
+    // itself happens to contain a hyphen.
+    const isDraw = homeGoals === awayGoals;
+    const homeWon = homeGoals > awayGoals;
+    const awayWon = awayGoals > homeGoals;
+    const coversHome = selection.includes(home);
+    const coversAway = selection.includes(away);
+    const coversDraw = selection.includes("draw");
+    if (!coversHome && !coversAway && !coversDraw) return "pending";
+    if ((coversHome && homeWon) || (coversAway && awayWon) || (coversDraw && isDraw)) {
+      return "won";
+    }
+    return "lost";
+  }
   if (leg.betType === "BTTS & Over 2.5 (Estimate)") {
     const bothScored = homeGoals > 0 && awayGoals > 0;
     const over = (homeGoals + awayGoals) > 2.5;
@@ -93,7 +118,6 @@ function determineOutcome(leg, homeTeam, awayTeam, homeGoals, awayGoals, homeHTG
     const under = (homeGoals + awayGoals) < 2.5;
     return (!bothScored && under) ? "won" : "lost";
   }
-
   if (leg.betType === "Half Time / Full Time") {
     if (homeHTGoals == null || awayHTGoals == null) return "pending"; // no HT data yet
     const parts = selection.split("/").map((p) => p.trim());
@@ -103,7 +127,6 @@ function determineOutcome(leg, homeTeam, awayTeam, homeGoals, awayGoals, homeHTG
     const ftResult = matchResultKey(homeGoals, awayGoals, home, away);
     return (htPick === htResult && ftPick === ftResult) ? "won" : "lost";
   }
-
   return "pending";
 }
 

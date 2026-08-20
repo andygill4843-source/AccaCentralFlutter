@@ -11,7 +11,6 @@ import 'package:collection/collection.dart';
 import 'notifications_screen.dart';
 import 'submission_gauge.dart';
 
-int unreadNotifications = 0;
 
 class HomeScreen extends StatefulWidget {
   final AppState appState;
@@ -186,15 +185,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _formatDate(DateTime dt) => '${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
-  @override
+    @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: false,
-        centerTitle: false,
-        titleSpacing: 16,
-        toolbarHeight: 90,
-        title: Image.asset('assets/images/logo_horizontal.png', height: 56, fit: BoxFit.contain),
+        title: Image.asset('assets/images/logo_horizontal.png', height: 32, fit: BoxFit.contain),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
         actions: [
