@@ -143,31 +143,48 @@ class _AuthScreenState extends State<AuthScreen> {
                     const Text('Remember me'),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: isLoading ? null : _showForgotPasswordDialog,
-                    child: const Text('Forgotten password?', style: TextStyle(color: AccaColors.gold, fontSize: 13)),
-                  ),
-                ),
+                
               ],
               if (errorMessage != null) ...[
                 const SizedBox(height: 12),
                 Text(errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 13)),
               ],
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: isLoading ? null : submit,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AccaColors.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                            const SizedBox(height: 20),
+              if (mode == AuthMode.login)
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: isLoading ? null : submit,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AccaColors.primary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        child: isLoading
+                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Text('Log in'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: isLoading ? null : _showForgotPasswordDialog,
+                      child: const Text('Forgotten password?', style: TextStyle(color: AccaColors.gold, fontSize: 13)),
+                    ),
+                  ],
+                )
+              else
+                ElevatedButton(
+                  onPressed: isLoading ? null : submit,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AccaColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: isLoading
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Create account'),
                 ),
-                child: isLoading
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : Text(mode == AuthMode.login ? 'Log in' : 'Create account'),
-              ),
             ],
           ),
         ),

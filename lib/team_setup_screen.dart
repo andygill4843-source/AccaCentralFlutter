@@ -26,6 +26,9 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
   bool isLoading = false;
   String? errorMessage;
 
+  int maxChallenges = 2;
+  int maxPhysioSessions = 2;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -61,6 +64,14 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
                 _field('Team name', teamNameController),
                 const SizedBox(height: 14),
                 _field('Season', seasonController),
+                const SizedBox(height: 14),
+                _numberDropdown('Challenges per member this season', Icons.flash_on, maxChallenges, (v) {
+                  if (v != null) setState(() => maxChallenges = v);
+                }),
+                const SizedBox(height: 14),
+                _numberDropdown('Physio sessions per member this season', Icons.medical_services, maxPhysioSessions, (v) {
+                  if (v != null) setState(() => maxPhysioSessions = v);
+                }),
               ] else
                 _field('Invite code', inviteCodeController, capitalize: true),
               if (errorMessage != null) ...[
@@ -83,6 +94,33 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _numberDropdown(String label, IconData icon, int value, ValueChanged<int?> onChanged) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 13, color: AccaColors.textSecondary)),
+        const SizedBox(height: 4),
+        DropdownButtonFormField<int>(
+          initialValue: value,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: Colors.white,
+            prefixIcon: Icon(icon, color: AccaColors.primary),
+            contentPadding: const EdgeInsets.all(12),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Colors.white24),
+            ),
+          ),
+          dropdownColor: Colors.white,
+          style: const TextStyle(color: Colors.black),
+          items: [for (int i = 0; i <= 5; i++) DropdownMenuItem(value: i, child: Text('$i'))],
+          onChanged: onChanged,
+        ),
+      ],
     );
   }
 
@@ -129,6 +167,15 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
               inviteCode: inviteCodeController.text.trim().toUpperCase(),
               userId: userId,
             );
+      if (mode == TeamSetupMode.create && team.id != null) {
+        await FirestoreService.instance.createSeasonSettings(SeasonSettings(
+          teamId: team.id!,
+          season: team.season,
+          maxChallengesPerMember: maxChallenges,
+          maxPhysioSessionsPerMember: maxPhysioSessions,
+          createdAt: DateTime.now(),
+        ));
+      }
 
       final member = Member(
         id: null,

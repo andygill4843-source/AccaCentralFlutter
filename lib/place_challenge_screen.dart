@@ -12,6 +12,7 @@ class PlaceChallengeScreen extends StatefulWidget {
   final Member challenger;
   final AccumulatorLeg? challengerLeg;
   final int challengesRemaining;
+  final bool alreadyChallengedThisWeek;
 
   const PlaceChallengeScreen({
     super.key,
@@ -23,6 +24,7 @@ class PlaceChallengeScreen extends StatefulWidget {
     required this.challenger,
     required this.challengerLeg,
     required this.challengesRemaining,
+    required this.alreadyChallengedThisWeek,
   });
 
   @override
@@ -32,6 +34,7 @@ class PlaceChallengeScreen extends StatefulWidget {
 class _PlaceChallengeScreenState extends State<PlaceChallengeScreen> {
   bool isSubmitting = false;
   String? errorMessage;
+
 
   Future<void> submit() async {
     if (widget.challengesRemaining <= 0) {
@@ -44,6 +47,10 @@ class _PlaceChallengeScreenState extends State<PlaceChallengeScreen> {
     }
     if (widget.challenger.id == widget.challengedLeg.memberId) {
       setState(() => errorMessage = "You can't challenge your own leg.");
+      return;
+    }
+    if (widget.alreadyChallengedThisWeek) {
+      setState(() => errorMessage = "You've already placed a challenge this gameweek.");
       return;
     }
 

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'uk_odds_api_service.dart';
-import 'odds_api_service.dart';
 import 'pick_outcome_screen.dart';
 import 'main.dart';
 
@@ -46,42 +45,7 @@ class _SubmitLegScreenState
     'ligue 1': 'Ligue 1',
   };
 
-  // ============================================================
-  // THE ODDS API LEAGUE MAP
-  // ============================================================
 
-  static const Map<String, SoccerLeague?>
-      _theOddsApiLeagueMap = {
-    'english premier':
-        SoccerLeague.premierLeague,
-
-    'english championship':
-        null,
-
-    'english league one':
-        null,
-
-    'english league two':
-        null,
-
-    'fa cup':
-        null,
-
-    'champions league':
-        SoccerLeague.championsLeague,
-
-    'la liga':
-        SoccerLeague.laLiga,
-
-    'serie a':
-        SoccerLeague.serieA,
-
-    'bundesliga':
-        SoccerLeague.bundesliga,
-
-    'ligue 1':
-        SoccerLeague.ligue1,
-  };
 
   // ============================================================
   // STATE
@@ -600,10 +564,6 @@ class _SubmitLegScreenState
                     teamId:
                         widget.teamId,
 
-                    theOddsApiLeague:
-                        _theOddsApiLeagueMap[
-                          selectedLeague
-                        ],
                   ),
                 ),
               );

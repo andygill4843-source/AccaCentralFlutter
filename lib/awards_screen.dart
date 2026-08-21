@@ -11,7 +11,8 @@ import 'models.dart';
 class AwardsScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
-  const AwardsScreen({super.key, required this.appState, required this.teamId});
+  final int refreshToken;
+  const AwardsScreen({super.key, required this.appState, required this.teamId, this.refreshToken = 0});
   @override
   State<AwardsScreen> createState() => _AwardsScreenState();
 }
@@ -32,6 +33,7 @@ class _AwardsScreenState extends State<AwardsScreen> {
   bool isLoading = true;
   String? errorMessage;
   Member? currentMember;
+  int unreadNotifications = 0;
   bool get isManager => currentMember?.role == MemberRole.manager;
 
   @override
@@ -43,7 +45,7 @@ class _AwardsScreenState extends State<AwardsScreen> {
   @override
   void didUpdateWidget(covariant AwardsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.teamId != widget.teamId) {
+    if (oldWidget.teamId != widget.teamId || oldWidget.refreshToken != widget.refreshToken) {
       load();
     }
   }
@@ -64,6 +66,7 @@ class _AwardsScreenState extends State<AwardsScreen> {
         });
         return;
       }
+      final unreadCount = await FirestoreService.instance.fetchUnreadNotificationCount(teamId: widget.teamId, memberId: member.id!);
       final team = await FirestoreService.instance.fetchTeam(widget.teamId);
       final members = await FirestoreService.instance.fetchMembers(widget.teamId);
       final legs = await FirestoreService.instance.fetchLegs(widget.teamId);
@@ -79,6 +82,7 @@ class _AwardsScreenState extends State<AwardsScreen> {
       teamCurrentSeason = team?.season;
       selectedSeason ??= teamCurrentSeason;
       currentMember = member;
+      unreadNotifications = unreadCount;
 
       recompute();
       setState(() => isLoading = false);
@@ -132,7 +136,7 @@ class _AwardsScreenState extends State<AwardsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-                title: RichText(
+        title: RichText(
           text: TextSpan(
             children: [
               TextSpan(text: 'Trophy ', style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600)),
@@ -144,12 +148,19 @@ class _AwardsScreenState extends State<AwardsScreen> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications_outlined),
+            icon: Badge(
+              label: Text('$unreadNotifications'),
+              isLabelVisible: unreadNotifications > 0,
+              child: Icon(Icons.notifications_outlined, color: unreadNotifications > 0 ? AccaColors.gold : Colors.white),
+            ),
             onPressed: currentMember?.id == null
                 ? null
-                : () => Navigator.of(context).push(
+                : () async {
+                    await Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
-                    ),
+                    );
+                    load();
+                  },
           ),
           IconButton(
             icon: const Icon(Icons.person),

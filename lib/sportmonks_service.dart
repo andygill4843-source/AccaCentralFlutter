@@ -92,7 +92,7 @@ class SportmonksService {
   SportmonksService._();
 
   static const _baseUrl = 'https://api.sportmonks.com/v3/football';
-  static const _apiToken = 'hdkhpa8UZkgocItDmHY5rctiXFbqguYweioOEgMHzMTB0iB06V71fAVOE10E'; // load from a secrets file, never hardcode for real
+  static const _apiToken = String.fromEnvironment('SPORTMONKS_API_TOKEN'); // load from a secrets file, never hardcode for real
 
   Future<SportmonksFixture> fetchFixture(int id) async {
     final uri = Uri.parse('$_baseUrl/fixtures/$id').replace(queryParameters: {

@@ -18,6 +18,103 @@ class FirestoreService {
     return snapshot.docs.map((doc) => Member.fromMap(doc.id, doc.data())).toList();
   }
 
+  Future<SeasonSettings?> fetchSeasonSettings({required String teamId, required String season}) async {
+    final doc = await _db.collection('seasonSettings').doc('${teamId}_$season').get();
+    if (!doc.exists) return null;
+    return SeasonSettings.fromMap(doc.id, doc.data()!);
+  }
+
+  Future<void> updateGameWeekDeadline({required String gameWeekId, required DateTime newDeadline}) async {
+    await _db.collection('gameWeeks').doc(gameWeekId).update({'deadline': newDeadline});
+  }
+
+  Future<void> createSeasonSettings(SeasonSettings settings) async {
+    final docId = '${settings.teamId}_${settings.season}';
+    await _db.collection('seasonSettings').doc(docId).set(settings.toMap());
+  }
+
+  Future<int> fetchPhysioSessionsUsed({required String teamId, required String memberId, required String season}) async {
+    final snapshot = await _db
+        .collection('physioSessions')
+        .where('teamId', isEqualTo: teamId)
+        .where('memberId', isEqualTo: memberId)
+        .where('season', isEqualTo: season)
+        .get();
+    return snapshot.docs.length;
+  }
+
+  Future<List<PhysioSession>> fetchPhysioSessions(String teamId) async {
+    final snapshot = await _db.collection('physioSessions').where('teamId', isEqualTo: teamId).get();
+    return snapshot.docs.map((doc) => PhysioSession.fromMap(doc.id, doc.data())).toList();
+  }
+
+  /// Whether [memberId] has an active (unconsumed by a leg yet, or already
+  /// applied) physio booking for this specific gameweek.
+  Future<bool> hasPhysioProtectionPending({required String teamId, required String memberId, required String gameWeekId}) async {
+    final snapshot = await _db
+        .collection('physioSessions')
+        .where('teamId', isEqualTo: teamId)
+        .where('memberId', isEqualTo: memberId)
+        .where('gameWeekId', isEqualTo: gameWeekId)
+        .limit(1)
+        .get();
+    return snapshot.docs.isNotEmpty;
+  }
+
+  /// Books a physio session for [memberId] on [gameWeek]. If they've already
+  /// submitted a leg for this gameweek, that leg is protected immediately;
+  /// otherwise protection is picked up automatically whenever they do submit
+  /// (see PickOutcomeScreen.submit()/submitCombo()).
+  Future<void> bookPhysioSession({
+    required String teamId,
+    required String memberId,
+    required String memberName,
+    required String season,
+    required GameWeek gameWeek,
+  }) async {
+    if (gameWeek.id == null) return;
+    final settings = await fetchSeasonSettings(teamId: teamId, season: season);
+    final maxSessions = settings?.maxPhysioSessionsPerMember ?? 2;
+    final usedThisSeason = await fetchPhysioSessionsUsed(teamId: teamId, memberId: memberId, season: season);
+    if (usedThisSeason >= maxSessions) {
+      throw Exception('No physio sessions remaining this season.');
+    }
+    final alreadyBooked = await hasPhysioProtectionPending(teamId: teamId, memberId: memberId, gameWeekId: gameWeek.id!);
+    if (alreadyBooked) {
+      throw Exception('Already booked a physio session for this gameweek.');
+    }
+    final session = PhysioSession(
+      teamId: teamId,
+      memberId: memberId,
+      memberName: memberName,
+      season: season,
+      gameWeekId: gameWeek.id!,
+      weekNumber: gameWeek.weekNumber,
+      usedAt: DateTime.now(),
+    );
+    await _db.collection('physioSessions').add(session.toMap());
+
+    final legSnap = await _db
+        .collection('legs')
+        .where('teamId', isEqualTo: teamId)
+        .where('memberId', isEqualTo: memberId)
+        .where('gameWeekId', isEqualTo: gameWeek.id)
+        .limit(1)
+        .get();
+    if (legSnap.docs.isNotEmpty) {
+      await legSnap.docs.first.reference.update({'physioProtected': true});
+    }
+
+    final members = await fetchMembers(teamId);
+    await sendNotification(
+      teamId: teamId,
+      recipientMemberIds: [for (final m in members) if (m.id != null) m.id!],
+      type: NotificationType.physioUsed,
+      title: 'PHYSIO ALERT 🩺',
+      body: '$memberName has gone into recovery mode for week ${gameWeek.weekNumber}. They\'ve protected their points for the week 👀',
+    );
+  }
+
   Future<void> createChallenge(Challenge challenge) async {
     await _db.collection('challenges').add(challenge.toMap());
   }
@@ -334,33 +431,29 @@ class FirestoreService {
     await teamRef.update({'season': newSeason});
   }
 
-  Future<GameWeek?> fetchActiveGameWeek(String teamId) async {
+    Future<GameWeek?> fetchActiveGameWeek(String teamId) async {
     final teamDoc = await _db.collection('teams').doc(teamId).get();
     final activeId = teamDoc.data()?['activeGameWeekId'] as String?;
     if (activeId == null) return null;
     final gwDoc = await _db.collection('gameWeeks').doc(activeId).get();
     if (!gwDoc.exists) return null;
-    final gameWeek = GameWeek.fromMap(gwDoc.id, gwDoc.data()!);
-
-    // Lazy-check: fires whether the last leg settled manually
-    // (updateLegOutcome) or via the settleLegs.js Cloud Function — same
-    // pattern already used for fine disputes and challenges.
-    if (!gameWeek.isSettled) {
-      final legsSnap = await _db.collection('legs').where('teamId', isEqualTo: teamId).where('gameWeekId', isEqualTo: activeId).get();
-      final legs = legsSnap.docs.map((d) => AccumulatorLeg.fromMap(d.id, d.data())).toList();
-      final allSettled = legs.isNotEmpty && legs.every((l) => l.outcome != LegOutcome.pending);
-      if (allSettled) {
-        await _finishGameWeekAndNotify(teamId: teamId, gameWeek: gameWeek);
-        return null; // it just finished — there's no active gameweek anymore
-      }
-    }
-    return gameWeek;
+    return GameWeek.fromMap(gwDoc.id, gwDoc.data()!);
   }
 
-  Future<void> _finishGameWeekAndNotify({required String teamId, required GameWeek gameWeek}) async {
+  /// Whether every leg in [gameWeekId] has actually settled (won/lost) yet —
+  /// intended to gate a manager's "End Gameweek" button, since ending a
+  /// gameweek with legs still pending wouldn't reflect final results.
+  Future<bool> areAllLegsSettled({required String teamId, required String gameWeekId}) async {
+    final legsSnap = await _db.collection('legs').where('teamId', isEqualTo: teamId).where('gameWeekId', isEqualTo: gameWeekId).get();
+    final legs = legsSnap.docs.map((d) => AccumulatorLeg.fromMap(d.id, d.data())).toList();
+    return legs.isNotEmpty && legs.every((l) => l.outcome != LegOutcome.pending);
+  }
+
+  /// Explicitly ends a gameweek — now only ever triggered by the manager's
+  /// "End Gameweek" button, not automatically once every leg happens to settle.
+  Future<void> endActiveGameWeek({required String teamId, required GameWeek gameWeek}) async {
     if (gameWeek.id == null) return;
     await settleGameWeek(teamId: teamId, gameWeekId: gameWeek.id!);
-
     final team = await fetchTeam(teamId);
     final season = team?.season ?? gameWeek.season;
     final members = await fetchMembers(teamId);
@@ -370,7 +463,6 @@ class FirestoreService {
     final seasonLegs = allLegs.where((l) => seasonGameWeekIds.contains(l.gameWeekId)).toList();
     final challenges = await fetchChallenges(teamId: teamId, season: season);
     final table = ScoringEngine.buildLeagueTable(members: members, legs: seasonLegs, challenges: challenges);
-
     for (int i = 0; i < table.length; i++) {
       final entry = table[i];
       await sendNotification(

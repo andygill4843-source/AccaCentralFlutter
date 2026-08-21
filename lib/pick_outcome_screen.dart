@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'uk_odds_api_service.dart';
-import 'odds_api_service.dart';
 import 'poisson_combo_service.dart';
 import 'firestore_service.dart';
 import 'fixture_matching_service.dart';
@@ -29,7 +28,6 @@ class PickOutcomeScreen extends StatefulWidget {
   final String gameWeekId;
   final String memberId;
   final String teamId;
-  final SoccerLeague? theOddsApiLeague;
 
   const PickOutcomeScreen({
     super.key,
@@ -37,7 +35,6 @@ class PickOutcomeScreen extends StatefulWidget {
     required this.gameWeekId,
     required this.memberId,
     required this.teamId,
-    this.theOddsApiLeague,
   });
 
   @override
@@ -46,7 +43,6 @@ class PickOutcomeScreen extends StatefulWidget {
 
 class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
   UkOddsEvent? fullEvent;
-  Map<String, String> bookmakerLinks = {};
   bool isLoading = true;
   bool isSubmitting = false;
   String? errorMessage;
@@ -73,19 +69,7 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
         isLoading = false;
       });
 
-      if (widget.theOddsApiLeague != null) {
-        try {
-          final links = await OddsAPIService.instance.fetchBookmakerLinks(
-            homeTeam: widget.fixture.homeTeam,
-            awayTeam: widget.fixture.awayTeam,
-            kickoff: widget.fixture.kickoffUtc,
-            league: widget.theOddsApiLeague!,
-          );
-          if (mounted) setState(() => bookmakerLinks = links);
-        } catch (_) {
-          // Links are supplementary — never block the main odds display.
-        }
-      }
+      
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -180,6 +164,12 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
         kickoff: widget.fixture.kickoffUtc,
       );
 
+      final physioProtected = await FirestoreService.instance.hasPhysioProtectionPending(
+        teamId: widget.teamId,
+        memberId: widget.memberId,
+        gameWeekId: widget.gameWeekId,
+      );
+
       final leg = AccumulatorLeg(
         id: null,
         gameWeekId: widget.gameWeekId,
@@ -193,10 +183,10 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
         decimalOddsAtSelection: outcome.bestPrice,
         bookmaker: outcome.bestBookmaker,
         bookmakerPrices: outcome.allPrices,
-        bookmakerLinks: bookmakerLinks.isEmpty ? null : bookmakerLinks,
         sportmonksFixtureId: sportmonksId,
         outcome: LegOutcome.pending,
         submittedAt: DateTime.now(),
+        physioProtected: physioProtected,
       );
 
       await FirestoreService.instance.submitLeg(leg);
@@ -233,6 +223,12 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
         kickoff: widget.fixture.kickoffUtc,
       );
 
+      final physioProtected = await FirestoreService.instance.hasPhysioProtectionPending(
+        teamId: widget.teamId,
+        memberId: widget.memberId,
+        gameWeekId: widget.gameWeekId,
+      );
+
       final leg = AccumulatorLeg(
         id: null,
         gameWeekId: widget.gameWeekId,
@@ -246,10 +242,10 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
         decimalOddsAtSelection: best.value,
         bookmaker: best.key,
         bookmakerPrices: priceMap,
-        bookmakerLinks: bookmakerLinks.isEmpty ? null : bookmakerLinks,
         sportmonksFixtureId: sportmonksId,
         outcome: LegOutcome.pending,
         submittedAt: DateTime.now(),
+        physioProtected: physioProtected,
       );
 
       await FirestoreService.instance.submitLeg(leg);

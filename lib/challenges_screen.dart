@@ -17,6 +17,7 @@ class _ChallengesScreenState extends State<ChallengesScreen> {
   List<Challenge> challenges = [];
   bool isLoading = true;
   String? errorMessage;
+  int maxChallenges = 2;
 
   @override
   void initState() {
@@ -30,9 +31,11 @@ class _ChallengesScreenState extends State<ChallengesScreen> {
       final team = await FirestoreService.instance.fetchTeam(widget.teamId);
       final loadedMembers = await FirestoreService.instance.fetchMembers(widget.teamId);
       final loadedChallenges = await FirestoreService.instance.fetchChallenges(teamId: widget.teamId, season: team?.season ?? '');
+      final seasonSettings = await FirestoreService.instance.fetchSeasonSettings(teamId: widget.teamId, season: team?.season ?? '');
       setState(() {
         members = loadedMembers;
         challenges = loadedChallenges;
+        maxChallenges = seasonSettings?.maxChallengesPerMember ?? 2;
         isLoading = false;
       });
     } catch (e) {
@@ -48,7 +51,7 @@ class _ChallengesScreenState extends State<ChallengesScreen> {
     final resolved = placed.where((c) => c.status == ChallengeStatus.resolved);
     final won = resolved.where((c) => c.challengerWon == true).length;
     final lost = resolved.where((c) => c.challengerWon == false).length;
-    final remaining = (2 - lost).clamp(0, 2);
+    final remaining = (maxChallenges - lost).clamp(0, maxChallenges);
     return (remaining: remaining, placed: placed.length, won: won, lost: lost);
   }
 

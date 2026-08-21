@@ -7,9 +7,7 @@ import 'main.dart'; // for AccaColors
 
 class GameWeekSetupScreen extends StatefulWidget {
   final AppState appState;
-
   const GameWeekSetupScreen({super.key, required this.appState});
-
   @override
   State<GameWeekSetupScreen> createState() => _GameWeekSetupScreenState();
 }
@@ -19,7 +17,6 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
   DateTime startDate = DateTime.now();
   DateTime endDate = DateTime.now().add(const Duration(days: 3));
   DateTime deadline = DateTime.now().add(const Duration(days: 3));
-
   bool isLoading = false;
   String? errorMessage;
   String? currentSeason;
@@ -63,7 +60,6 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     final team = await FirestoreService.instance.fetchTeam(teamId);
     final existing = await FirestoreService.instance.fetchGameWeeks(teamId);
     final currentSeasonGameWeeks = existing.where((g) => g.season == team?.season).toList();
-
     setState(() {
       weekNumber = currentSeasonGameWeeks.isEmpty
           ? 1
@@ -80,13 +76,12 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       lastDate: DateTime.now().add(const Duration(days: 60)),
     );
     if (date == null || !mounted) return;
-
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(initial),
+      initialEntryMode: TimePickerEntryMode.input,
     );
     if (time == null) return;
-
     final combined = DateTime(date.year, date.month, date.day, time.hour, time.minute);
     setState(() => setter(combined));
   }
@@ -94,7 +89,6 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
   Future<void> create() async {
     final teamId = widget.appState.currentUser?.teamIds.first;
     if (teamId == null) return;
-
     if (!endDate.isAfter(startDate)) {
       setState(() => errorMessage = 'The last match window must end after the first kickoff.');
       return;
@@ -107,12 +101,10 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       setState(() => errorMessage = "Gameweeks can only be set up within the next two weeks — bookmaker odds aren't posted further ahead than that.");
       return;
     }
-
     setState(() {
       errorMessage = null;
       isLoading = true;
     });
-
     try {
       final existing = await FirestoreService.instance.fetchGameWeeks(teamId);
       if (existing.any((g) => !g.isSettled)) {
@@ -122,7 +114,6 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         });
         return;
       }
-
       final gameWeek = GameWeek(
         id: null,
         teamId: teamId,
@@ -135,7 +126,6 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         season: (await FirestoreService.instance.fetchTeam(teamId))?.season ?? '2026-27',
       );
       await FirestoreService.instance.createGameWeek(gameWeek);
-
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       setState(() {
@@ -149,12 +139,20 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     if (activeGameWeek == null || activeGameWeek!.id == null) return;
     final teamId = widget.appState.currentUser?.teamIds.first;
     if (teamId == null) return;
-
+    final allSettled = await FirestoreService.instance.areAllLegsSettled(
+      teamId: teamId,
+      gameWeekId: activeGameWeek!.id!,
+    );
+    if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('End gameweek?'),
-        content: Text('This ends Week ${activeGameWeek!.weekNumber}. Selections will close.'),
+        content: Text(
+          allSettled
+              ? 'This ends Week ${activeGameWeek!.weekNumber}. Selections will close.'
+              : "Not every leg has settled yet, so points may not be final. This ends Week ${activeGameWeek!.weekNumber} anyway — selections will close.",
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('End gameweek')),
@@ -162,9 +160,8 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       ),
     );
     if (confirmed != true) return;
-
     try {
-      await FirestoreService.instance.settleGameWeek(teamId: teamId, gameWeekId: activeGameWeek!.id!);
+      await FirestoreService.instance.endActiveGameWeek(teamId: teamId, gameWeek: activeGameWeek!);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gameweek ended.')));
       }
@@ -177,21 +174,57 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     }
   }
 
+  Future<void> editActiveGameWeekDeadline() async {
+    if (activeGameWeek == null || activeGameWeek!.id == null) return;
+    final initial = activeGameWeek!.deadline;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: activeGameWeek!.endDate,
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+      initialEntryMode: TimePickerEntryMode.input,
+    );
+    if (time == null) return;
+    final newDeadline = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    if (newDeadline.isAfter(activeGameWeek!.endDate)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Deadline can't be after the last match window ends.")),
+      );
+      return;
+    }
+    try {
+      await FirestoreService.instance.updateGameWeekDeadline(
+        gameWeekId: activeGameWeek!.id!,
+        newDeadline: newDeadline,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Deadline updated.')));
+      }
+      loadActiveGameWeek();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error updating deadline: ${e.toString()}')));
+      }
+    }
+  }
+
   Future<void> endSeason() async {
     final userId = widget.appState.currentUser?.id;
     if (userId == null) return;
     final teamId = widget.appState.currentUser!.teamIds.first;
-
     final team = await FirestoreService.instance.fetchTeam(teamId);
     if (team == null || !mounted) return;
-
     final members = await FirestoreService.instance.fetchMembers(teamId);
     final legs = await FirestoreService.instance.fetchLegs(teamId);
     final gameWeeks = await FirestoreService.instance.fetchGameWeeks(teamId);
     final currentSeasonGameWeekIds = gameWeeks.where((g) => g.season == team.season).map((g) => g.id).toSet();
     final currentSeasonLegs = legs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
     final table = ScoringEngine.buildLeagueTable(members: members, legs: currentSeasonLegs);
-
     if (!mounted) return;
     if (table.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -200,45 +233,81 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       return;
     }
     final winner = table.first;
-
     final newSeasonController = TextEditingController();
+    int dialogMaxChallenges = 2;
+    int dialogMaxPhysioSessions = 2;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Are you sure you want to end the season?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('${winner.displayName} will be crowned champion of ${team.season} with ${winner.totalBasePoints} points.'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: newSeasonController,
-              decoration: const InputDecoration(labelText: 'New season name (required)'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Are you sure you want to end the season?'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('${winner.displayName} will be crowned champion of ${team.season} with ${winner.totalBasePoints} points.'),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: newSeasonController,
+                  decoration: const InputDecoration(labelText: 'New season name (required)'),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<int>(
+                  initialValue: dialogMaxChallenges,
+                  decoration: const InputDecoration(
+                    labelText: 'Challenges per member this season',
+                    prefixIcon: Icon(Icons.flash_on),
+                  ),
+                  items: [for (int i = 0; i <= 5; i++) DropdownMenuItem(value: i, child: Text('$i'))],
+                  onChanged: (v) {
+                    if (v != null) setDialogState(() => dialogMaxChallenges = v);
+                  },
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<int>(
+                  initialValue: dialogMaxPhysioSessions,
+                  decoration: const InputDecoration(
+                    labelText: 'Physio sessions per member this season',
+                    prefixIcon: Icon(Icons.medical_services),
+                  ),
+                  items: [for (int i = 0; i <= 5; i++) DropdownMenuItem(value: i, child: Text('$i'))],
+                  onChanged: (v) {
+                    if (v != null) setDialogState(() => dialogMaxPhysioSessions = v);
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () {
+                if (newSeasonController.text.trim().isEmpty) return;
+                Navigator.pop(context, true);
+              },
+              child: const Text('End season'),
             ),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () {
-              if (newSeasonController.text.trim().isEmpty) return;
-              Navigator.pop(context, true);
-            },
-            child: const Text('End season'),
-          ),
-        ],
       ),
     );
     if (confirmed != true || newSeasonController.text.trim().isEmpty) return;
-
+    final newSeasonName = newSeasonController.text.trim();
     try {
       await FirestoreService.instance.endSeason(
         teamId: teamId,
         currentSeason: team.season,
-        newSeason: newSeasonController.text.trim(),
+        newSeason: newSeasonName,
         winner: winner,
       );
+      await FirestoreService.instance.createSeasonSettings(SeasonSettings(
+        teamId: teamId,
+        season: newSeasonName,
+        maxChallengesPerMember: dialogMaxChallenges,
+        maxPhysioSessionsPerMember: dialogMaxPhysioSessions,
+        createdAt: DateTime.now(),
+      ));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${winner.displayName} crowned champion of ${team.season}!')),
@@ -283,10 +352,17 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
                         Text(currentSeason ?? '—', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                       ],
                     ),
-                    OutlinedButton(
-                      onPressed: endSeason,
-                      child: const Text('Start new season'),
-                    ),
+                    const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: editActiveGameWeekDeadline,
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: AccaColors.gold),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text('Start new season', style: TextStyle(fontSize: 12)),
+                          ),
                   ],
                 ),
               ),
@@ -296,20 +372,54 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('Active gameweek', style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
-                          Text('Week ${activeGameWeek!.weekNumber}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Active gameweek', style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
+                                Text('Week ${activeGameWeek!.weekNumber}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: endCurrentGameWeek,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red,
+                              side: const BorderSide(color: Colors.red),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text('End current gameweek', style: TextStyle(fontSize: 12)),
+                          ),
                         ],
                       ),
-                      OutlinedButton(
-                        onPressed: endCurrentGameWeek,
-                        style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                        child: const Text('End current gameweek'),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text('Deadline: ${formatDateTime(activeGameWeek!.deadline)}', style: const TextStyle(fontSize: 13)),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: editActiveGameWeekDeadline,
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: AccaColors.gold),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text('Edit', style: TextStyle(fontSize: 12)),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -345,7 +455,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
             const SizedBox(height: 8),
             ListTile(
               tileColor: AccaColors.surface,
-              title: const Text('Last match window ends'),
+              title: const Text('Latest kickoff'),
               subtitle: Text(formatDateTime(endDate)),
               onTap: () => pickDateField(() => endDate, (d) => endDate = d),
             ),

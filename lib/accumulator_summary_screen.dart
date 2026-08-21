@@ -9,9 +9,8 @@ import 'odds_format.dart';
 class _BookmakerOption {
   final String bookmaker;
   final double combinedOdds;
-  final List<(AccumulatorLeg leg, String? link)> legLinks;
 
-  _BookmakerOption({required this.bookmaker, required this.combinedOdds, required this.legLinks});
+  _BookmakerOption({required this.bookmaker, required this.combinedOdds});
 }
 
 class AccumulatorSummaryScreen extends StatefulWidget {
@@ -114,8 +113,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
 
     final options = common.map((bookmaker) {
       final combined = legs.fold<double>(1.0, (product, leg) => product * ((leg.bookmakerPrices ?? {})[bookmaker] ?? 1.0));
-      final links = legs.map((l) => (l, (l.bookmakerLinks ?? {})[bookmaker])).toList();
-      return _BookmakerOption(bookmaker: bookmaker, combinedOdds: combined, legLinks: links);
+      return _BookmakerOption(bookmaker: bookmaker, combinedOdds: combined);
     }).toList();
 
     options.sort((a, b) => b.combinedOdds.compareTo(a.combinedOdds));
@@ -171,24 +169,18 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     }
   }
 
-    Future<void> offerTransfer(_BookmakerOption option) async {
-    final links = option.legLinks.where((pair) => pair.$2 != null).toList();
-    final homepageUrl = _bookmakerHomepages[option.bookmaker];
+  Future<void> offerTransfer(_BookmakerOption option) async {
     final action = await showDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('Bookmaker selected'),
         content: Text(
-          links.isEmpty
-              ? "No direct betslip links are available for ${option.bookmaker} on these legs. You can open ${option.bookmaker}'s site directly, remain on the app, or return and reselect."
-              : "You can open each leg directly in ${option.bookmaker}, go to ${option.bookmaker}'s site, remain on the app with the odds locked in, or return and reselect.",
+          "You can go to ${option.bookmaker}'s site, remain on the app with the odds locked in, or return and reselect.",
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, 'return'), child: const Text('Return and reselect')),
-          if (links.isNotEmpty)
-            TextButton(onPressed: () => Navigator.pop(context, 'transfer'), child: Text('Open legs in ${option.bookmaker}')),
-          if (homepageUrl != null)
+          if (_bookmakerHomepages[option.bookmaker] != null)
             TextButton(onPressed: () => Navigator.pop(context, 'transferHomepage'), child: const Text('Transfer to bookmakers')),
           TextButton(onPressed: () => Navigator.pop(context, 'remain'), child: const Text('Remain on the app')),
         ],
@@ -205,16 +197,10 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
           isLocked = false;
         });
         break;
-      case 'transfer':
-        for (final pair in links) {
-          final url = Uri.parse(pair.$2!);
-          await launchUrl(url, mode: LaunchMode.externalApplication);
-          await Future.delayed(const Duration(milliseconds: 800));
-        }
-        break;
       case 'transferHomepage':
-        if (homepageUrl != null) {
-          await launchUrl(Uri.parse(homepageUrl), mode: LaunchMode.externalApplication);
+        final url = _bookmakerHomepages[option.bookmaker];
+        if (url != null) {
+          await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
         }
         break;
       case 'remain':
@@ -266,7 +252,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     return _BookmakerOption(
       bookmaker: selectedBookmaker!,
       combinedOdds: combinedOdds ?? 0,
-      legLinks: legs.map((l) => (l, (l.bookmakerLinks ?? {})[selectedBookmaker])).toList(),
     );
   }
 
@@ -401,22 +386,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            for (final pair in option.legLinks)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: pair.$2 != null
-                    ? InkWell(
-                        onTap: () => launchUrl(Uri.parse(pair.$2!)),
-                        child: Text(
-                          '${pair.$1.fixtureDescription}: open bet →',
-                          style: TextStyle(fontSize: 11, color: AccaColors.gold),
-                        ),
-                      )
-                    : Text(
-                        '${pair.$1.fixtureDescription}: no direct link',
-                        style: TextStyle(fontSize: 11, color: AccaColors.textSecondary),
-                      ),
-              ),
           ],
         ),
       ),

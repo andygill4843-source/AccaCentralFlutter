@@ -26,6 +26,7 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
   String? currentSeason;
   Member? currentMember;
   Member? member;
+  int unreadNotifications = 0;
 
   // --- Graph state ---
   Set<String>? _selectedMemberIds; // null = show every member
@@ -61,6 +62,9 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
       if (userId != null) {
         currentMember = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
       }
+      final unreadCount = currentMember?.id != null
+          ? await FirestoreService.instance.fetchUnreadNotificationCount(teamId: widget.teamId, memberId: currentMember!.id!)
+          : 0;
       final currentSeasonGameWeeks = gameWeeks.where((g) => g.season == team?.season).toList();
       final currentSeasonGameWeekIds = currentSeasonGameWeeks.map((g) => g.id).toSet();
       final currentSeasonLegs = legs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
@@ -98,6 +102,7 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
         entries = currentEntries;
         formDelta = delta;
         positionHistory = history;
+        unreadNotifications = unreadCount;
         isLoading = false;
         // Keep the existing filter selection if it's still valid; otherwise fall back to "show everyone".
         if (_selectedMemberIds != null) {
@@ -133,12 +138,19 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications_outlined),
+            icon: Badge(
+              label: Text('$unreadNotifications'),
+              isLabelVisible: unreadNotifications > 0,
+              child: Icon(Icons.notifications_outlined, color: unreadNotifications > 0 ? AccaColors.gold : Colors.white),
+            ),
             onPressed: currentMember?.id == null
                 ? null
-                : () => Navigator.of(context).push(
+                : () async {
+                    await Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
-                    ),
+                    );
+                    load();
+                  },
           ),
           IconButton(
             icon: const Icon(Icons.person),
@@ -163,7 +175,7 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
                           children: [
                             _frozenColumnTable(),
                             const SizedBox(height: 24),
-                            if (positionHistory.length >= 2) _positionChart(),
+                            _positionChart(),
                           ],
                         ),
                       ),
@@ -293,207 +305,209 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
   }
 
   Widget _memberFilterChips() {
-  final allSelected = _selectedMemberIds == null;
-  return Wrap(
-    spacing: 8,
-    runSpacing: 4,
-    children: [
-      FilterChip(
-        label: const Text('All'),
-        selected: allSelected,
-        onSelected: (_) => setState(() => _selectedMemberIds = null),
-        selectedColor: _brandGreen.withValues(alpha: 0.25),
-        checkmarkColor: _brandGreen,
-        labelStyle: const TextStyle(fontSize: 11, color: Colors.white),
-      ),
-      for (final entry in entries)
+    final allSelected = _selectedMemberIds == null;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
         FilterChip(
-          label: Text(entry.displayName),
-          selected: allSelected || _selectedMemberIds!.contains(entry.memberId),
-          onSelected: (selected) {
-            setState(() {
-              final current = _selectedMemberIds ?? entries.map((e) => e.memberId).toSet();
-              final updated = Set<String>.from(current);
-              if (selected) {
-                updated.add(entry.memberId);
-              } else {
-                updated.remove(entry.memberId);
-              }
-              _selectedMemberIds = updated.length == entries.length ? null : updated;
-            });
-          },
+          label: const Text('All'),
+          selected: allSelected,
+          onSelected: (_) => setState(() => _selectedMemberIds = null),
           selectedColor: _brandGreen.withValues(alpha: 0.25),
           checkmarkColor: _brandGreen,
           labelStyle: const TextStyle(fontSize: 11, color: Colors.white),
         ),
-    ],
-  );
-}
+        for (final entry in entries)
+          FilterChip(
+            label: Text(entry.displayName),
+            selected: allSelected || _selectedMemberIds!.contains(entry.memberId),
+            onSelected: (selected) {
+              setState(() {
+                final current = _selectedMemberIds ?? entries.map((e) => e.memberId).toSet();
+                final updated = Set<String>.from(current);
+                if (selected) {
+                  updated.add(entry.memberId);
+                } else {
+                  updated.remove(entry.memberId);
+                }
+                _selectedMemberIds = updated.length == entries.length ? null : updated;
+              });
+            },
+            selectedColor: _brandGreen.withValues(alpha: 0.25),
+            checkmarkColor: _brandGreen,
+            labelStyle: const TextStyle(fontSize: 11, color: Colors.white),
+          ),
+      ],
+    );
+  }
 
-Widget _positionChart() {
-  final weeks = positionHistory.keys.toList()..sort();
-  final allMemberIds = entries.map((e) => e.memberId).toList();
-  final visibleMemberIds = _selectedMemberIds == null
-      ? allMemberIds
-      : allMemberIds.where((id) => _selectedMemberIds!.contains(id)).toList();
-  final worstPosition = entries.length; // highest position number = bottom of the table
+  Widget _positionChart() {
+    final weeks = positionHistory.keys.toList()..sort();
+    final allMemberIds = entries.map((e) => e.memberId).toList();
+    final visibleMemberIds = _selectedMemberIds == null
+        ? allMemberIds
+        : allMemberIds.where((id) => _selectedMemberIds!.contains(id)).toList();
+    final worstPosition = entries.length; // highest position number = bottom of the table
 
-  // fl_chart always plots low values at the bottom, high at the top. To get
-  // position 1 at the TOP, we plot (worstPosition + 1 - position) and map the
-  // axis tick labels back to real positions on display.
-  double toChartY(int position) => (worstPosition + 1 - position).toDouble();
-  int fromChartY(double chartY) => (worstPosition + 1 - chartY).round();
+    // fl_chart always plots low values at the bottom, high at the top. To get
+    // position 1 at the TOP, we plot (worstPosition + 1 - position) and map the
+    // axis tick labels back to real positions on display.
+    double toChartY(int position) => (worstPosition + 1 - position).toDouble();
+    int fromChartY(double chartY) => (worstPosition + 1 - chartY).round();
 
-  return Container(
-    padding: const EdgeInsets.fromLTRB(8, 16, 16, 8),
-    decoration: BoxDecoration(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: _brandGreen, width: 1.5),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'League Table Tracker',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
-        ),
-        const SizedBox(height: 2),
-        const Text(
-          'The race for the championship',
-          style: TextStyle(fontWeight: FontWeight.normal, fontSize: 12, color: Colors.white),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 260,
-          child: LineChart(
-            LineChartData(
-              minY: 1,
-              maxY: worstPosition.toDouble(),
-              backgroundColor: Colors.transparent,
-              gridData: FlGridData(
-                show: true,
-                getDrawingHorizontalLine: (_) => FlLine(color: _brandGreen.withValues(alpha: 0.25), strokeWidth: 1),
-                getDrawingVerticalLine: (_) => FlLine(color: _brandGreen.withValues(alpha: 0.25), strokeWidth: 1),
-              ),
-              titlesData: FlTitlesData(
-                leftTitles: AxisTitles(
-                  axisNameWidget: const Text('League Position', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.white)),
-                  axisNameSize: 20,
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    reservedSize: 28,
-                    interval: 1,
-                    getTitlesWidget: (v, _) => Text(
-                      '${fromChartY(v)}',
-                      style: const TextStyle(fontSize: 10, color: Colors.white),
-                    ),
-                  ),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 16, 16, 8),
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _brandGreen, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'League Table Tracker',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+          ),
+          const SizedBox(height: 2),
+          const Text(
+            'The race for the championship',
+            style: TextStyle(fontWeight: FontWeight.normal, fontSize: 12, color: Colors.white),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 260,
+            child: LineChart(
+              LineChartData(
+                minY: 1,
+                maxY: worstPosition.toDouble(),
+                minX: 1,
+                maxX: weeks.isEmpty ? 2 : weeks.last.toDouble(),
+                backgroundColor: Colors.transparent,
+                gridData: FlGridData(
+                  show: true,
+                  getDrawingHorizontalLine: (_) => FlLine(color: _brandGreen.withValues(alpha: 0.25), strokeWidth: 1),
+                  getDrawingVerticalLine: (_) => FlLine(color: _brandGreen.withValues(alpha: 0.25), strokeWidth: 1),
                 ),
-                bottomTitles: AxisTitles(
-                  axisNameWidget: const Text('Gameweek', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.white)),
-                  axisNameSize: 20,
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    interval: 1,
-                    getTitlesWidget: (v, _) => Text(
-                      '${v.toInt()}',
-                      style: const TextStyle(fontSize: 10, color: Colors.white),
-                    ),
-                  ),
-                ),
-                topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-              ),
-              borderData: FlBorderData(
-                show: true,
-                border: Border.all(color: _brandGreen, width: 1),
-              ),
-              lineTouchData: LineTouchData(
-                enabled: true,
-                handleBuiltInTouches: true,
-                touchCallback: (event, response) {
-                  if (event is FlTapUpEvent &&
-                      response != null &&
-                      response.lineBarSpots != null &&
-                      response.lineBarSpots!.isNotEmpty) {
-                    final gw = response.lineBarSpots!.first.x.round();
-                    setState(() {
-                      _touchedGameWeek = (_touchedGameWeek == gw) ? null : gw;
-                    });
-                  }
-                },
-              ),
-              extraLinesData: _touchedGameWeek == null
-                  ? const ExtraLinesData()
-                  : ExtraLinesData(
-                      verticalLines: [
-                        VerticalLine(
-                          x: _touchedGameWeek!.toDouble(),
-                          color: _brandGreen,
-                          strokeWidth: 2,
-                          dashArray: [6, 4],
-                          label: VerticalLineLabel(
-                            show: true,
-                            alignment: Alignment.topRight,
-                            padding: const EdgeInsets.only(bottom: 4, left: 4),
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _brandGreen),
-                            labelResolver: (line) => 'GW${_touchedGameWeek}',
-                          ),
-                        ),
-                      ],
-                    ),
-              lineBarsData: [
-                for (int i = 0; i < visibleMemberIds.length; i++)
-                  LineChartBarData(
-                    isCurved: true,
-                    curveSmoothness: 0.55,
-                    preventCurveOverShooting: true,
-                    preventCurveOvershootingThreshold: 5,
-                    color: _memberColor(allMemberIds.indexOf(visibleMemberIds[i]), allMemberIds.length),
-                    barWidth: 2,
-                    dotData: FlDotData(
-                      show: true,
-                      getDotPainter: (spot, percent, bar, index) => FlDotCirclePainter(
-                        radius: 2.5,
-                        color: bar.color ?? _brandGreen,
-                        strokeWidth: 0,
+                titlesData: FlTitlesData(
+                  leftTitles: AxisTitles(
+                    axisNameWidget: const Text('League Position', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.white)),
+                    axisNameSize: 20,
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 28,
+                      interval: 1,
+                      getTitlesWidget: (v, _) => Text(
+                        '${fromChartY(v)}',
+                        style: const TextStyle(fontSize: 10, color: Colors.white),
                       ),
                     ),
-                    spots: [
-                      for (final week in weeks)
-                        FlSpot(
-                          week.toDouble(),
-                          toChartY(positionHistory[week]!.indexWhere((e) => e.memberId == visibleMemberIds[i]) + 1),
+                  ),
+                  bottomTitles: AxisTitles(
+                    axisNameWidget: const Text('Gameweek', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.white)),
+                    axisNameSize: 20,
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      interval: 1,
+                      getTitlesWidget: (v, _) => Text(
+                        '${v.toInt()}',
+                        style: const TextStyle(fontSize: 10, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                ),
+                borderData: FlBorderData(
+                  show: true,
+                  border: Border.all(color: _brandGreen, width: 1),
+                ),
+                lineTouchData: LineTouchData(
+                  enabled: true,
+                  handleBuiltInTouches: true,
+                  touchCallback: (event, response) {
+                    if (event is FlTapUpEvent &&
+                        response != null &&
+                        response.lineBarSpots != null &&
+                        response.lineBarSpots!.isNotEmpty) {
+                      final gw = response.lineBarSpots!.first.x.round();
+                      setState(() {
+                        _touchedGameWeek = (_touchedGameWeek == gw) ? null : gw;
+                      });
+                    }
+                  },
+                ),
+                extraLinesData: _touchedGameWeek == null
+                    ? const ExtraLinesData()
+                    : ExtraLinesData(
+                        verticalLines: [
+                          VerticalLine(
+                            x: _touchedGameWeek!.toDouble(),
+                            color: _brandGreen,
+                            strokeWidth: 2,
+                            dashArray: [6, 4],
+                            label: VerticalLineLabel(
+                              show: true,
+                              alignment: Alignment.topRight,
+                              padding: const EdgeInsets.only(bottom: 4, left: 4),
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _brandGreen),
+                              labelResolver: (line) => 'GW${_touchedGameWeek}',
+                            ),
+                          ),
+                        ],
+                      ),
+                lineBarsData: [
+                  for (int i = 0; i < visibleMemberIds.length; i++)
+                    LineChartBarData(
+                      isCurved: true,
+                      curveSmoothness: 0.55,
+                      preventCurveOverShooting: true,
+                      preventCurveOvershootingThreshold: 5,
+                      color: _memberColor(allMemberIds.indexOf(visibleMemberIds[i]), allMemberIds.length),
+                      barWidth: 2,
+                      dotData: FlDotData(
+                        show: true,
+                        getDotPainter: (spot, percent, bar, index) => FlDotCirclePainter(
+                          radius: 2.5,
+                          color: bar.color ?? _brandGreen,
+                          strokeWidth: 0,
                         ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 12,
-          children: [
-            for (final id in visibleMemberIds)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(width: 10, height: 10, color: _memberColor(allMemberIds.indexOf(id), allMemberIds.length)),
-                  const SizedBox(width: 4),
-                  Text(
-                    entries.firstWhere((e) => e.memberId == id).displayName,
-                    style: const TextStyle(fontSize: 10, color: Colors.white),
-                  ),
+                      ),
+                      spots: [
+                        for (final week in weeks)
+                          FlSpot(
+                            week.toDouble(),
+                            toChartY(positionHistory[week]!.indexWhere((e) => e.memberId == visibleMemberIds[i]) + 1),
+                          ),
+                      ],
+                    ),
                 ],
               ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        _memberFilterChips(),
-      ],
-    ),
-  );
- }
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            children: [
+              for (final id in visibleMemberIds)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(width: 10, height: 10, color: _memberColor(allMemberIds.indexOf(id), allMemberIds.length)),
+                    const SizedBox(width: 4),
+                    Text(
+                      entries.firstWhere((e) => e.memberId == id).displayName,
+                      style: const TextStyle(fontSize: 10, color: Colors.white),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _memberFilterChips(),
+        ],
+      ),
+    );
+  }
 }

@@ -198,7 +198,7 @@ class UkOddsApiService {
       'https://api.ukoddsapi.com/v1';
 
   static const String _apiKey =
-      'uko_live_1d0cf96bd797924397a5ef64eab59e7e';
+      String.fromEnvironment('UK_ODDS_API_KEY');
 
   /// ==========================================================
   /// NORMALISE

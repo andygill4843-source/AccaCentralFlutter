@@ -72,6 +72,12 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /seasonSettings/{settingsId} {
+      allow read: if !exists(/databases/$(database)/documents/seasonSettings/$(settingsId)) || isMemberOfTeam(resource.data.teamId);
+      allow create: if isTeamManager(request.resource.data.teamId);
+      allow update, delete: if false;
+}
+
     match /usernames/{username} {
       allow read: if true;
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
@@ -147,17 +153,31 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /physioSessions/{sessionId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+      allow create: if isSignedIn()
+        && ownsMemberDoc(request.resource.data.memberId)
+        && isMemberOfTeam(request.resource.data.teamId)
+        && !isGameWeekLocked(request.resource.data.gameWeekId);
+      allow update, delete: if false;
+    }
+
     match /legs/{legId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
-
       allow create: if isSignedIn()
         && ownsMemberDoc(request.resource.data.memberId)
         && isMemberOfTeam(request.resource.data.teamId)
         && request.resource.data.outcome == 'pending'
 	&& !isGameWeekLocked(request.resource.data.gameWeekId);
-
-      allow update: if isTeamManager(resource.data.teamId)
-    	&& request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outcome', 'decimalOddsAtSelection', 'bookmaker', 'preLockOddsAtSelection', 'preLockBookmaker']);
+      allow update: if (
+        isTeamManager(resource.data.teamId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outcome', 'decimalOddsAtSelection', 'bookmaker', 'preLockOddsAtSelection', 'preLockBookmaker'])
+      ) || (
+        // The leg's own owner booking a physio session on an already-submitted leg.
+        ownsMemberDoc(resource.data.memberId)
+        && !isGameWeekLocked(resource.data.gameWeekId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['physioProtected'])
+      );
       allow delete: if isSignedIn()
     	&& resource.data.outcome == 'pending'
     	&& (ownsMemberDoc(resource.data.memberId) || isTeamManager(resource.data.teamId))

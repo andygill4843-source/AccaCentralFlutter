@@ -6,6 +6,7 @@ import 'league_table_tab.dart';
 import 'stats_screen.dart';
 import 'awards_screen.dart';
 import 'main.dart'; // for AccaColors
+import 'physio_screen.dart';
 
 class MainTabScaffold extends StatefulWidget {
   final AppState appState;
@@ -19,7 +20,7 @@ class MainTabScaffold extends StatefulWidget {
 
 class _MainTabScaffoldState extends State<MainTabScaffold> {
   int currentIndex = 0;
-    final Map<int, int> refreshTokens = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0};
+    final Map<int, int> refreshTokens = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
 
   void _select(int i) {
     setState(() {
@@ -36,8 +37,9 @@ class _MainTabScaffoldState extends State<MainTabScaffold> {
     (Icons.home, 'Home'),
     (Icons.sports_soccer, 'Hub'),
     (Icons.scoreboard, 'League'),
-    (Icons.bar_chart, 'Performance'),
+    (Icons.bar_chart, 'Form'),
     (Icons.military_tech, 'Trophies'),
+    (Icons.medical_services, 'Physio'),
   ];
 
   @override
@@ -46,8 +48,9 @@ class _MainTabScaffoldState extends State<MainTabScaffold> {
       HomeScreen(appState: widget.appState, teamId: widget.teamId, onNavigateToTab: goToTab, refreshToken: refreshTokens[0]!),
       AccaHubScreen(appState: widget.appState, teamId: widget.teamId),
       LeagueTableTab(appState: widget.appState, teamId: widget.teamId, refreshToken: refreshTokens[2]!),
-      StatsScreen(appState: widget.appState, teamId: widget.teamId),
-      AwardsScreen(appState: widget.appState, teamId: widget.teamId),
+      StatsScreen(appState: widget.appState, teamId: widget.teamId, refreshToken: refreshTokens[3]!),
+      AwardsScreen(appState: widget.appState, teamId: widget.teamId, refreshToken: refreshTokens[4]!),
+      PhysioScreen(appState: widget.appState, teamId: widget.teamId, refreshToken: refreshTokens[5]!),
     ];
 
     return Scaffold(

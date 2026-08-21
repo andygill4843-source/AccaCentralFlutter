@@ -9,7 +9,6 @@ class Team {
   final DateTime createdAt;
   final String season;
   final String? activeGameWeekId;
-
   Team({
     this.id,
     required this.name,
@@ -20,7 +19,6 @@ class Team {
     required this.season,
     this.activeGameWeekId,
   });
-
   factory Team.fromMap(String id, Map<String, dynamic> map) {
     return Team(
       id: id,
@@ -33,7 +31,6 @@ class Team {
       activeGameWeekId: map['activeGameWeekId'], // absent on older docs — reads as null, that's fine
     );
   }
-
   Map<String, dynamic> toMap() {
     return {
       'name': name,
@@ -55,7 +52,6 @@ class AppUser {
   final List<String> teamIds;
   final String? fcmToken;
   final DateTime createdAt;
-
   AppUser({
     this.id,
     required this.username,
@@ -65,7 +61,6 @@ class AppUser {
     this.fcmToken,
     required this.createdAt,
   });
-
   factory AppUser.fromMap(String id, Map<String, dynamic> map) {
     return AppUser(
       id: id,
@@ -77,7 +72,6 @@ class AppUser {
       createdAt: map['createdAt'].toDate(),
     );
   }
-
   Map<String, dynamic> toMap() {
     return {
       'username': username,
@@ -91,10 +85,8 @@ class AppUser {
 }
 
 enum MemberRole { manager, squadMember }
-
 extension MemberRoleValue on MemberRole {
   String get value => this == MemberRole.manager ? 'manager' : 'squad_member';
-
   static MemberRole fromValue(String? value) {
     return value == 'manager' ? MemberRole.manager : MemberRole.squadMember;
   }
@@ -107,7 +99,6 @@ class Member {
   final String teamId;
   final DateTime joinedAt;
   final MemberRole role;
-
   Member({
     this.id,
     required this.userId,
@@ -116,7 +107,6 @@ class Member {
     required this.joinedAt,
     this.role = MemberRole.squadMember,
   });
-
   factory Member.fromMap(String id, Map<String, dynamic> map) {
     return Member(
       id: id,
@@ -127,7 +117,6 @@ class Member {
       role: MemberRoleValue.fromValue(map['role']),
     );
   }
-
   Map<String, dynamic> toMap() {
     return {
       'userId': userId,
@@ -152,7 +141,6 @@ class GameWeek {
   final DateTime createdAt;
   final DateTime deadline;
   final String season;
-
   GameWeek({
     this.id,
     required this.teamId,
@@ -168,7 +156,6 @@ class GameWeek {
     required this.season,
   })  : createdAt = createdAt ?? startDate,
         deadline = deadline ?? startDate; // fallback for older gameweeks without a real deadline set
-
   factory GameWeek.fromMap(String id, Map<String, dynamic> map) {
     return GameWeek(
       id: id,
@@ -185,7 +172,6 @@ class GameWeek {
       season: map['season'] ?? 'Unknown Season',
     );
   }
-
   Map<String, dynamic> toMap() {
     return {
       'teamId': teamId,
@@ -203,7 +189,6 @@ class GameWeek {
 }
 
 enum LegOutcome { pending, won, lost, void_ }
-
 extension LegOutcomeValue on LegOutcome {
   String get value {
     switch (this) {
@@ -213,7 +198,6 @@ extension LegOutcomeValue on LegOutcome {
       case LegOutcome.void_: return 'void';
     }
   }
-
   static LegOutcome fromValue(String value) {
     switch (value) {
       case 'won': return LegOutcome.won;
@@ -241,7 +225,6 @@ enum BetType {
   bttsNoUnderCombo,
   other,
 }
-
 extension BetTypeValue on BetType {
   String get displayName {
     switch (this) {
@@ -262,7 +245,6 @@ extension BetTypeValue on BetType {
       case BetType.other: return 'Other';
     }
   }
-
   static BetType fromDisplayName(String name) {
     return BetType.values.firstWhere(
       (t) => t.displayName == name,
@@ -276,23 +258,18 @@ class AccumulatorLeg {
   final String gameWeekId;
   final String teamId;
   final String memberId;
-
   final String fixtureId;
   final String fixtureDescription;
   final DateTime kickoff;
-
   final BetType betType;
   final String selectionDescription;
-
   final double decimalOddsAtSelection;
   final String bookmaker;
   final Map<String, double>? bookmakerPrices;
-  final Map<String, String>? bookmakerLinks;
   final int? sportmonksFixtureId;
-
   final LegOutcome outcome;
   final DateTime submittedAt;
-
+  final bool physioProtected;
   AccumulatorLeg({
     this.id,
     required this.gameWeekId,
@@ -306,21 +283,16 @@ class AccumulatorLeg {
     required this.decimalOddsAtSelection,
     required this.bookmaker,
     this.bookmakerPrices,
-    this.bookmakerLinks,
     this.sportmonksFixtureId,
     required this.outcome,
     required this.submittedAt,
+    this.physioProtected = false,
   });
-
-  // 3 points for a win — primary league table sort key
   int get basePoints => outcome == LegOutcome.won ? 3 : 0;
-
-  // (decimal - 1) x 3 — same formula as the Swift version
   double get weightedPoints {
     if (outcome != LegOutcome.won) return 0;
     return (decimalOddsAtSelection - 1.0) * 3.0;
   }
-
   factory AccumulatorLeg.fromMap(String id, Map<String, dynamic> map) {
     return AccumulatorLeg(
       id: id,
@@ -337,15 +309,12 @@ class AccumulatorLeg {
       bookmakerPrices: (map['bookmakerPrices'] as Map?)?.map(
         (k, v) => MapEntry(k as String, (v as num).toDouble()),
       ),
-      bookmakerLinks: (map['bookmakerLinks'] as Map?)?.map(
-        (k, v) => MapEntry(k as String, v as String),
-      ),
       sportmonksFixtureId: map['sportmonksFixtureId'],
       outcome: LegOutcomeValue.fromValue(map['outcome']),
       submittedAt: map['submittedAt'].toDate(),
+      physioProtected: map['physioProtected'] ?? false,
     );
   }
-
   Map<String, dynamic> toMap() {
     return {
       'gameWeekId': gameWeekId,
@@ -359,14 +328,15 @@ class AccumulatorLeg {
       'decimalOddsAtSelection': decimalOddsAtSelection,
       'bookmaker': bookmaker,
       'bookmakerPrices': bookmakerPrices,
-      'bookmakerLinks': bookmakerLinks,
       'sportmonksFixtureId': sportmonksFixtureId,
       'outcome': outcome.value,
       'submittedAt': submittedAt,
+      'physioProtected': physioProtected,
     };
-   }
   }
-  class SeasonWinner {
+}
+
+class SeasonWinner {
   final String? id;
   final String teamId;
   final String season;
@@ -375,7 +345,6 @@ class AccumulatorLeg {
   final int totalBasePoints;
   final double totalWeightedPoints;
   final DateTime endedAt;
-
   SeasonWinner({
     this.id,
     required this.teamId,
@@ -386,7 +355,6 @@ class AccumulatorLeg {
     required this.totalWeightedPoints,
     required this.endedAt,
   });
-
   factory SeasonWinner.fromMap(String id, Map<String, dynamic> map) {
     return SeasonWinner(
       id: id,
@@ -399,7 +367,6 @@ class AccumulatorLeg {
       endedAt: map['endedAt'].toDate(),
     );
   }
-
   Map<String, dynamic> toMap() {
     return {
       'teamId': teamId,
@@ -413,8 +380,43 @@ class AccumulatorLeg {
   }
 }
 
-enum FineType { lateSelection, accaKiller, reminderTax, repeatOffender }
+class SeasonSettings {
+  final String? id;
+  final String teamId;
+  final String season;
+  final int maxChallengesPerMember;
+  final int maxPhysioSessionsPerMember;
+  final DateTime createdAt;
+  SeasonSettings({
+    this.id,
+    required this.teamId,
+    required this.season,
+    required this.maxChallengesPerMember,
+    required this.maxPhysioSessionsPerMember,
+    required this.createdAt,
+  });
+  factory SeasonSettings.fromMap(String id, Map<String, dynamic> map) {
+    return SeasonSettings(
+      id: id,
+      teamId: map['teamId'],
+      season: map['season'],
+      maxChallengesPerMember: map['maxChallengesPerMember'] ?? 2,
+      maxPhysioSessionsPerMember: map['maxPhysioSessionsPerMember'] ?? 2,
+      createdAt: map['createdAt'].toDate(),
+    );
+  }
+  Map<String, dynamic> toMap() {
+    return {
+      'teamId': teamId,
+      'season': season,
+      'maxChallengesPerMember': maxChallengesPerMember,
+      'maxPhysioSessionsPerMember': maxPhysioSessionsPerMember,
+      'createdAt': createdAt,
+    };
+  }
+}
 
+enum FineType { lateSelection, accaKiller, reminderTax, repeatOffender }
 extension FineTypeValue on FineType {
   String get value {
     switch (this) {
@@ -424,7 +426,6 @@ extension FineTypeValue on FineType {
       case FineType.repeatOffender: return 'repeat_offender';
     }
   }
-
   String get displayName {
     switch (this) {
       case FineType.lateSelection: return 'Late Selection Fine';
@@ -433,7 +434,6 @@ extension FineTypeValue on FineType {
       case FineType.repeatOffender: return 'Repeat Offender';
     }
   }
-
   static FineType fromValue(String? value) {
     switch (value) {
       case 'acca_killer': return FineType.accaKiller;
@@ -445,7 +445,6 @@ extension FineTypeValue on FineType {
 }
 
 enum FineStatus { pending, accepted, disputed, upheld, overturned }
-
 extension FineStatusValue on FineStatus {
   String get value {
     switch (this) {
@@ -456,7 +455,6 @@ extension FineStatusValue on FineStatus {
       case FineStatus.overturned: return 'overturned';
     }
   }
-
   static FineStatus fromValue(String? value) {
     switch (value) {
       case 'accepted': return FineStatus.accepted;
@@ -484,7 +482,6 @@ class Fine {
   final bool paid;
   final DateTime? paidAt;
   final Map<String, bool> votes; // memberId -> true (uphold) / false (overturn)
-
   Fine({
     this.id,
     required this.teamId,
@@ -502,13 +499,11 @@ class Fine {
     this.paidAt,
     this.votes = const {},
   });
-
   /// Counts toward the tally from the moment it's placed, and stays on the
   /// tally the whole way through — pending, accepted, or under dispute.
   /// The only outcome that removes it is a successful dispute (Overturned);
   /// Upheld or a tied vote leaves it counted.
   bool get countsTowardTally => status != FineStatus.overturned && !paid;
-
   factory Fine.fromMap(String id, Map<String, dynamic> map) {
     return Fine(
       id: id,
@@ -528,7 +523,6 @@ class Fine {
       votes: Map<String, bool>.from(map['votes'] ?? {}),
     );
   }
-
   Map<String, dynamic> toMap() {
     return {
       'teamId': teamId,
@@ -550,7 +544,6 @@ class Fine {
 }
 
 enum ChallengeStatus { active, resolved }
-
 extension ChallengeStatusValue on ChallengeStatus {
   String get value => this == ChallengeStatus.active ? 'active' : 'resolved';
   static ChallengeStatus fromValue(String? v) => v == 'resolved' ? ChallengeStatus.resolved : ChallengeStatus.active;
@@ -574,7 +567,6 @@ class Challenge {
   final ChallengeStatus status;
   final bool? challengerWon; // null until resolved
   final DateTime createdAt;
-
   Challenge({
     this.id,
     required this.teamId,
@@ -594,12 +586,10 @@ class Challenge {
     this.challengerWon,
     required this.createdAt,
   });
-
   /// The hypothetical win value of a leg at these odds — 3 base points,
   /// plus weighted points the same way any winning leg is scored.
   static double hypotheticalWeightedPoints(double odds) => (odds - 1) * 3;
   static const int hypotheticalBasePoints = 3;
-
   factory Challenge.fromMap(String id, Map<String, dynamic> map) {
     return Challenge(
       id: id,
@@ -621,7 +611,6 @@ class Challenge {
       createdAt: map['createdAt'].toDate(),
     );
   }
-
   Map<String, dynamic> toMap() {
     return {
       'teamId': teamId,
@@ -644,8 +633,7 @@ class Challenge {
   }
 }
 
-enum NotificationType { deadlineReminder, legRejected, fineIssued, fineDisputeVote, disputeResolved, nudge, challengePlaced, challengeResolved, gameweekLocked, leaguePosition, newGameweek }
-
+enum NotificationType { deadlineReminder, legRejected, fineIssued, fineDisputeVote, disputeResolved, nudge, challengePlaced, challengeResolved, gameweekLocked, leaguePosition, newGameweek, physioUsed }
 extension NotificationTypeValue on NotificationType {
   String get value => toString().split('.').last;
   static NotificationType fromValue(String? v) =>
@@ -661,7 +649,6 @@ class AppNotification {
   final String body;
   final DateTime createdAt;
   final bool read;
-
   AppNotification({
     this.id,
     required this.teamId,
@@ -672,7 +659,6 @@ class AppNotification {
     required this.createdAt,
     this.read = false,
   });
-
   factory AppNotification.fromMap(String id, Map<String, dynamic> map) {
     return AppNotification(
       id: id,
@@ -685,7 +671,6 @@ class AppNotification {
       read: map['read'] ?? false,
     );
   }
-
   Map<String, dynamic> toMap() {
     return {
       'teamId': teamId,
@@ -695,6 +680,50 @@ class AppNotification {
       'body': body,
       'createdAt': createdAt,
       'read': read,
+    };
+  }
+}
+
+class PhysioSession {
+  final String? id;
+  final String teamId;
+  final String memberId;
+  final String memberName;
+  final String season;
+  final String gameWeekId;
+  final int weekNumber;
+  final DateTime usedAt;
+  PhysioSession({
+    this.id,
+    required this.teamId,
+    required this.memberId,
+    required this.memberName,
+    required this.season,
+    required this.gameWeekId,
+    required this.weekNumber,
+    required this.usedAt,
+  });
+  factory PhysioSession.fromMap(String id, Map<String, dynamic> map) {
+    return PhysioSession(
+      id: id,
+      teamId: map['teamId'],
+      memberId: map['memberId'],
+      memberName: map['memberName'] ?? 'Unknown',
+      season: map['season'] ?? '',
+      gameWeekId: map['gameWeekId'],
+      weekNumber: map['weekNumber'] ?? 0,
+      usedAt: map['usedAt'].toDate(),
+    );
+  }
+  Map<String, dynamic> toMap() {
+    return {
+      'teamId': teamId,
+      'memberId': memberId,
+      'memberName': memberName,
+      'season': season,
+      'gameWeekId': gameWeekId,
+      'weekNumber': weekNumber,
+      'usedAt': usedAt,
     };
   }
 }

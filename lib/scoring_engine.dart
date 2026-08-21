@@ -44,8 +44,12 @@ class ScoringEngine {
           .toList()
         ..sort((a, b) => a.submittedAt.compareTo(b.submittedAt));
 
-      int totalBasePoints = settled.fold<int>(0, (sum, l) => sum + l.basePoints);
-      double totalWeightedPoints = settled.fold<double>(0, (sum, l) => sum + l.weightedPoints);
+      // A physio-protected leg always contributes exactly 3 base / 0 weighted
+      // once settled, regardless of its real outcome. The outcome itself is
+      // left untouched, so legsWon/streaks/biggestWin below are unaffected —
+      // physio only ever changes points, never stats, awards, or streaks.
+      int totalBasePoints = settled.fold<int>(0, (sum, l) => sum + (l.physioProtected ? 3 : l.basePoints));
+      double totalWeightedPoints = settled.fold<double>(0, (sum, l) => sum + (l.physioProtected ? 0 : l.weightedPoints));
 
       for (final challenge in challenges.where((c) => c.status == ChallengeStatus.resolved)) {
         final challengerGetsBonus = challenge.challengerWon == true;

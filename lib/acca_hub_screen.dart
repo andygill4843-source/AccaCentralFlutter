@@ -14,13 +14,12 @@ import 'main.dart'; // for AccaColors
 import 'package:google_fonts/google_fonts.dart';
 import 'challenges_screen.dart';
 import 'notifications_screen.dart';
+import 'selection_history_screen.dart';
 
 class AccaHubScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
-
   const AccaHubScreen({super.key, required this.appState, required this.teamId});
-
   @override
   State<AccaHubScreen> createState() => _AccaHubScreenState();
 }
@@ -30,8 +29,8 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
   GameWeek? activeGameWeek;
   int legCount = 0;
   int memberCount = 0;
+  int unreadNotifications = 0;
   bool isLoading = true;
-
   bool get isManager => currentMember?.role == MemberRole.manager;
 
   @override
@@ -54,6 +53,9 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     if (userId != null) {
       currentMember = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
     }
+    unreadNotifications = currentMember?.id != null
+        ? await FirestoreService.instance.fetchUnreadNotificationCount(teamId: widget.teamId, memberId: currentMember!.id!)
+        : 0;
     activeGameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
     final members = await FirestoreService.instance.fetchMembers(widget.teamId);
     memberCount = members.length;
@@ -80,14 +82,12 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     if (userId == null) return;
     final member = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
     if (member == null || member.id == null || !mounted) return;
-
     final existingLeg = await FirestoreService.instance.fetchMemberLegForGameWeek(
       teamId: widget.teamId,
       memberId: member.id!,
       gameWeekId: gameWeek.id!,
     );
     if (!mounted) return;
-
     if (existingLeg != null) {
       await Navigator.of(context).push(
         MaterialPageRoute(
@@ -135,12 +135,21 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
   }
 
   Future<void> endGameWeek() async {
-    if (activeGameWeek == null) return;
+    if (activeGameWeek == null || activeGameWeek!.id == null) return;
+    final allSettled = await FirestoreService.instance.areAllLegsSettled(
+      teamId: widget.teamId,
+      gameWeekId: activeGameWeek!.id!,
+    );
+    if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('End gameweek?'),
-        content: Text('This ends Week ${activeGameWeek!.weekNumber}. Selections will close.'),
+        content: Text(
+          allSettled
+              ? 'This ends Week ${activeGameWeek!.weekNumber}. Selections will close.'
+              : "Not every leg has settled yet, so points may not be final. This ends Week ${activeGameWeek!.weekNumber} anyway — selections will close.",
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('End gameweek')),
@@ -149,7 +158,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     );
     if (confirmed != true) return;
     try {
-      await FirestoreService.instance.settleGameWeek(teamId: widget.teamId, gameWeekId: activeGameWeek!.id!);
+      await FirestoreService.instance.endActiveGameWeek(teamId: widget.teamId, gameWeek: activeGameWeek!);
       load();
     } catch (e) {
       if (mounted) {
@@ -200,12 +209,19 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications_outlined),
+            icon: Badge(
+              label: Text('$unreadNotifications'),
+              isLabelVisible: unreadNotifications > 0,
+              child: Icon(Icons.notifications_outlined, color: unreadNotifications > 0 ? AccaColors.gold : Colors.white),
+            ),
             onPressed: currentMember?.id == null
                 ? null
-                : () => Navigator.of(context).push(
+                : () async {
+                    await Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
-                    ),
+                    );
+                    load();
+                  },
           ),
           IconButton(
             icon: const Icon(Icons.person),
@@ -225,7 +241,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                 children: [
                   _gameWeekStatusCard(),
                   const SizedBox(height: 24),
-                  Column(
+                    Column(
                     children: [
                       Row(
                         children: [
@@ -234,7 +250,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                               child: _hubButton(
                                 icon: activeGameWeek != null ? Icons.flag : Icons.add_circle_outline,
                                 label: 'Gameweek manager',
-                                onTap: activeGameWeek != null ? endGameWeek : openGameWeekManager,
+                                onTap: openGameWeekManager,
                               ),
                             ),
                           if (isManager) const SizedBox(width: 12),
@@ -255,6 +271,30 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _hubButton(
+                              icon: Icons.history,
+                              label: 'Selection History',
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(builder: (_) => SelectionHistoryScreen(appState: widget.appState, teamId: widget.teamId)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                         Expanded(
+                              child: _hubButton(
+                                icon: Icons.flash_on,
+                                label: 'Challenges',
+                                onTap: () => Navigator.of(context).push(
+                                  MaterialPageRoute(builder: (_) => ChallengesScreen(teamId: widget.teamId)),
+                                ),
+                              ),
+                            ), 
+                        ],
+                      ),
                       if (isManager) ...[
                         const SizedBox(height: 12),
                         Row(
@@ -265,20 +305,6 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                             const SizedBox(width: 12),
                             Expanded(
                               child: _hubButton(icon: Icons.bar_chart, label: 'Odds selection', onTap: openAccumulatorSummary),
-                            ),
-                          ],
-                        ),
-			const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _hubButton(
-                                icon: Icons.flash_on,
-                                label: 'Challenges',
-                                onTap: () => Navigator.of(context).push(
-                                  MaterialPageRoute(builder: (_) => ChallengesScreen(teamId: widget.teamId)),
-                                ),
-                              ),
                             ),
                           ],
                         ),
@@ -304,7 +330,6 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
         child: const Text('No active gameweek', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black)),
       );
     }
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),

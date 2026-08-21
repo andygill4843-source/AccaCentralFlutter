@@ -12,13 +12,10 @@ import 'notifications_screen.dart';
 class StatsScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
-
-  const StatsScreen({super.key, required this.appState, required this.teamId});
-
+  final int refreshToken;
+  const StatsScreen({super.key, required this.appState, required this.teamId, this.refreshToken = 0});
   @override
   State<StatsScreen> createState() => _StatsScreenState();
-
-  
 }
 
 class _StatsScreenState extends State<StatsScreen> {
@@ -29,6 +26,7 @@ class _StatsScreenState extends State<StatsScreen> {
   List<SeasonWinner> rawSeasonWinners = [];
   String? teamCurrentSeason;
   Member? currentMember;
+  int unreadNotifications = 0;
 
   // Derived, recomputed whenever selectedSeason changes.
   List<LeagueTableEntry> entries = [];
@@ -52,12 +50,12 @@ class _StatsScreenState extends State<StatsScreen> {
   @override
   void didUpdateWidget(covariant StatsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.teamId != widget.teamId) {
+    if (oldWidget.teamId != widget.teamId || oldWidget.refreshToken != widget.refreshToken) {
       load();
     }
   }
 
-  Future<void> load() async {
+    Future<void> load() async {
     setState(() {
       isLoading = true;
       errorMessage = null;
@@ -70,20 +68,22 @@ class _StatsScreenState extends State<StatsScreen> {
       final seasonWinners = await FirestoreService.instance.fetchSeasonWinners(widget.teamId);
       final userId = widget.appState.currentUser?.id;
       if (userId != null) {
-      currentMember = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
-    }
-
+        currentMember = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
+      }
+      final unreadCount = currentMember?.id != null
+          ? await FirestoreService.instance.fetchUnreadNotificationCount(teamId: widget.teamId, memberId: currentMember!.id!)
+          : 0;
       rawMembers = members;
       rawLegs = legs;
       rawGameWeeks = gameWeeks;
       rawSeasonWinners = seasonWinners;
       teamCurrentSeason = team?.season;
-
       selectedSeason ??= teamCurrentSeason;
-
       recompute();
-
-      setState(() => isLoading = false);
+      setState(() {
+        unreadNotifications = unreadCount;
+        isLoading = false;
+      });
     } catch (e) {
       setState(() {
         errorMessage = e.toString();
@@ -193,14 +193,21 @@ class _StatsScreenState extends State<StatsScreen> {
         ),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
-        actions: [
+                actions: [
           IconButton(
-            icon: const Icon(Icons.notifications_outlined),
+            icon: Badge(
+              label: Text('$unreadNotifications'),
+              isLabelVisible: unreadNotifications > 0,
+              child: Icon(Icons.notifications_outlined, color: unreadNotifications > 0 ? AccaColors.gold : Colors.white),
+            ),
             onPressed: currentMember?.id == null
                 ? null
-                : () => Navigator.of(context).push(
+                : () async {
+                    await Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
-                    ),
+                    );
+                    load();
+                  },
           ),
           IconButton(
             icon: const Icon(Icons.person),
