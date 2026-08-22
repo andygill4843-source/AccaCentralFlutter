@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'app_state.dart';
 import 'auth_service.dart';
 import 'main.dart'; // for AccaColors
+import 'choose_username_screen.dart';
+import 'models.dart';
 
 enum AuthMode { login, createAccount }
 
@@ -27,6 +29,65 @@ class _AuthScreenState extends State<AuthScreen> {
   bool rememberMe = true;
   bool isLoading = false;
   String? errorMessage;
+
+
+  Future<void> _handleGoogleSignIn() async {
+    setState(() {
+      errorMessage = null;
+      isLoading = true;
+    });
+    try {
+      final result = await AuthService.instance.signInWithGoogle();
+      if (result.user != null) {
+        await widget.appState.setRememberMe(true);
+        widget.appState.didLogIn(result.user!);
+        widget.onAuthenticated();
+        return;
+      }
+      if (!mounted) return;
+      final newUser = await Navigator.of(context).push<AppUser>(
+        MaterialPageRoute(builder: (_) => ChooseUsernameScreen(suggestedDisplayName: result.suggestedDisplayName)),
+      );
+      if (newUser != null) {
+        await widget.appState.setRememberMe(true);
+        widget.appState.didLogIn(newUser);
+        widget.onAuthenticated();
+      }
+    } catch (e) {
+      setState(() => errorMessage = e.toString().replaceFirst('AuthException: ', ''));
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  Future<void> _handleAppleSignIn() async {
+    setState(() {
+      errorMessage = null;
+      isLoading = true;
+    });
+    try {
+      final result = await AuthService.instance.signInWithApple();
+      if (result.user != null) {
+        await widget.appState.setRememberMe(true);
+        widget.appState.didLogIn(result.user!);
+        widget.onAuthenticated();
+        return;
+      }
+      if (!mounted) return;
+      final newUser = await Navigator.of(context).push<AppUser>(
+        MaterialPageRoute(builder: (_) => ChooseUsernameScreen(suggestedDisplayName: result.suggestedDisplayName)),
+      );
+      if (newUser != null) {
+        await widget.appState.setRememberMe(true);
+        widget.appState.didLogIn(newUser);
+        widget.onAuthenticated();
+      }
+    } catch (e) {
+      setState(() => errorMessage = e.toString().replaceFirst('AuthException: ', ''));
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
   
 
     Future<void> _showForgotPasswordDialog() async {
@@ -145,6 +206,36 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 
               ],
+
+              const SizedBox(height: 20),
+              Row(
+                children: const [
+                  Expanded(child: Divider(color: Colors.white24)),
+                  Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text('or', style: TextStyle(color: Colors.white54))),
+                  Expanded(child: Divider(color: Colors.white24)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton(
+                onPressed: isLoading ? null : _handleGoogleSignIn,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white38),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Continue with Google'),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: isLoading ? null : _handleAppleSignIn,
+                icon: const Icon(Icons.apple),
+                label: const Text('Continue with Apple'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white38),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
               if (errorMessage != null) ...[
                 const SizedBox(height: 12),
                 Text(errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 13)),

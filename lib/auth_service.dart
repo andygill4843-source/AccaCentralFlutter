@@ -1,6 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'models.dart';
+import 'dart:convert';
+import 'dart:math';
+import 'package:crypto/crypto.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 class AuthException implements Exception {
   final String message;
@@ -18,6 +23,118 @@ class AuthService {
   bool isValidUsername(String username) {
     final pattern = RegExp(r'^[a-z0-9_]{3,20}$');
     return pattern.hasMatch(username);
+  }
+
+  bool _googleSignInInitialized = false;
+
+  Future<void> _ensureGoogleSignInInitialized() async {
+    if (_googleSignInInitialized) return;
+    await GoogleSignIn.instance.initialize();
+    _googleSignInInitialized = true;
+  }
+
+  /// Returns the existing AppUser if this Google account has signed in
+  /// before; if user is null, this is a first-time sign-in and the caller
+  /// must collect a username via completeOAuthSignUp() before proceeding.
+  Future<({AppUser? user, String? suggestedDisplayName})> signInWithGoogle() async {
+    await _ensureGoogleSignInInitialized();
+    final GoogleSignInAccount googleUser;
+    try {
+      googleUser = await GoogleSignIn.instance.authenticate();
+    } catch (e) {
+      throw AuthException('Google sign-in was cancelled or failed.');
+    }
+    final idToken = googleUser.authentication.idToken;
+    if (idToken == null) {
+      throw AuthException('Could not get a Google credential — please try again.');
+    }
+    final credential = GoogleAuthProvider.credential(idToken: idToken);
+    final userCredential = await _auth.signInWithCredential(credential);
+    final uid = userCredential.user!.uid;
+    final userDoc = await _db.collection('users').doc(uid).get();
+    if (userDoc.exists) {
+      return (user: AppUser.fromMap(userDoc.id, userDoc.data()!), suggestedDisplayName: null);
+    }
+    return (user: null, suggestedDisplayName: googleUser.displayName);
+  }
+
+  /// Same contract as signInWithGoogle(). Apple only ever provides a name on
+  /// the very first authorization ever — never assume it'll be there again.
+  Future<({AppUser? user, String? suggestedDisplayName})> signInWithApple() async {
+    final rawNonce = _generateNonce();
+    final nonce = _sha256ofString(rawNonce);
+    final AuthorizationCredentialAppleID appleCredential;
+    try {
+      appleCredential = await SignInWithApple.getAppleIDCredential(
+        scopes: [AppleIDAuthorizationScopes.email, AppleIDAuthorizationScopes.fullName],
+        nonce: nonce,
+      );
+    } catch (e) {
+      throw AuthException('Apple sign-in was cancelled or failed.');
+    }
+    final oauthCredential = OAuthProvider('apple.com').credential(
+      idToken: appleCredential.identityToken,
+      rawNonce: rawNonce,
+    );
+    final userCredential = await _auth.signInWithCredential(oauthCredential);
+    final uid = userCredential.user!.uid;
+    final userDoc = await _db.collection('users').doc(uid).get();
+    if (userDoc.exists) {
+      return (user: AppUser.fromMap(userDoc.id, userDoc.data()!), suggestedDisplayName: null);
+    }
+    final nameParts = [appleCredential.givenName, appleCredential.familyName]
+        .where((s) => s != null && s.isNotEmpty)
+        .join(' ');
+    return (user: null, suggestedDisplayName: nameParts.isEmpty ? null : nameParts);
+  }
+
+  /// Called from ChooseUsernameScreen once a Google/Apple sign-in has
+  /// already authenticated with Firebase but has no users/{uid} doc yet.
+  /// Unlike signUp(), never rolls back the Firebase Auth account on
+  /// failure — it's the user's real Google/Apple identity, not something
+  /// this app minted; on a taken username they just retry with another.
+  Future<AppUser> completeOAuthSignUp({required String username, required String displayName}) async {
+    final firebaseUser = _auth.currentUser;
+    if (firebaseUser == null) {
+      throw AuthException('Not signed in — please try signing in again.');
+    }
+    final normalized = username.toLowerCase();
+    if (!isValidUsername(normalized)) {
+      throw AuthException('Usernames must be 3-20 characters, letters/numbers/underscore only.');
+    }
+    final uid = firebaseUser.uid;
+    final email = firebaseUser.email ?? '';
+    final usernameRef = _db.collection('usernames').doc(normalized);
+    final userRef = _db.collection('users').doc(uid);
+    final user = AppUser(
+      id: uid,
+      username: normalized,
+      displayName: displayName,
+      email: email,
+      teamIds: [],
+      fcmToken: null,
+      createdAt: DateTime.now(),
+    );
+    await _db.runTransaction((transaction) async {
+      final existing = await transaction.get(usernameRef);
+      if (existing.exists) {
+        throw AuthException('That username is already taken.');
+      }
+      transaction.set(usernameRef, {'uid': uid, 'email': email});
+      transaction.set(userRef, user.toMap());
+    });
+    return user;
+  }
+
+  String _generateNonce([int length = 32]) {
+    const charset = '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
+    final random = Random.secure();
+    return List.generate(length, (_) => charset[random.nextInt(charset.length)]).join();
+  }
+
+  String _sha256ofString(String input) {
+    final bytes = utf8.encode(input);
+    return sha256.convert(bytes).toString();
   }
 
   Future<AppUser> signUp({

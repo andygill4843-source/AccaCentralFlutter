@@ -244,54 +244,45 @@ class _SubmitLegScreenState
           // LEAGUE SELECTOR
           // ======================================================
 
-          Padding(
-            padding:
-                const EdgeInsets.all(16),
-
-            child:
+           Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'League',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
+                ),
+                const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
-                  
-              initialValue: selectedLeague,
-                  
-              decoration: accaFieldDecoration('League'),
-              
-              dropdownColor: Colors.white,
-          
-              style: accaFieldTextStyle,
-
-              items:
-                  _leagueOptions.entries
-                      .map(
-                (
-                  entry,
-                ) {
-                  return DropdownMenuItem<
-                      String>(
-                    value:
-                        entry.key,
-                    child:
-                        Text(
-                      entry.value,
+                  initialValue: selectedLeague,
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: AccaColors.gold, width: 1.5),
                     ),
-                  );
-                },
-              ).toList(),
-
-              onChanged:
-                  isLoading
+                  ),
+                  dropdownColor: Colors.white,
+                  style: accaFieldTextStyle,
+                  items: _leagueOptions.entries.map((entry) {
+                    return DropdownMenuItem<String>(
+                      value: entry.key,
+                      child: Text(entry.value),
+                    );
+                  }).toList(),
+                  onChanged: isLoading
                       ? null
-                      : (
-                          value,
-                        ) {
-                          if (value ==
-                              null) {
+                      : (value) {
+                          if (value == null) {
                             return;
                           }
-
-                          changeLeague(
-                            value,
-                          );
+                          changeLeague(value);
                         },
+                ),
+              ],
             ),
           ),
 
