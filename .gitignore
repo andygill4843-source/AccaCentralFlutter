@@ -32,6 +32,8 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+secrets.json
+functions/.env
 
 # Symbolication related
 app.*.symbols
