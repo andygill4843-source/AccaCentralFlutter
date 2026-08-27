@@ -34,6 +34,7 @@ migrate_working_dir/
 /coverage/
 secrets.json
 functions/.env
+functions/functions/.env
 
 # Symbolication related
 app.*.symbols
