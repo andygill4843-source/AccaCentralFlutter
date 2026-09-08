@@ -10,6 +10,11 @@ class AppState extends ChangeNotifier {
   AppScreen screen = AppScreen.splash;
   AppUser? currentUser;
   String? activeTeamId;
+  /// Set when the app is opened via an accacentral://join?code=XXXX deep
+  /// link. The RootScreen notices this via notifyListeners() and opens
+  /// TeamSetupScreen with the code pre-filled. Cleared by
+  /// consumeInviteCode() once the screen has consumed it.
+  String? pendingInviteCode;
 
   static const _rememberMeKey = 'acca.rememberMe';
 
@@ -23,9 +28,46 @@ class AppState extends ChangeNotifier {
     await prefs.setBool(_rememberMeKey, value);
   }
 
+  /// Set when a notification tap should switch the main tab bar — consumed
+  /// by MainTabScaffold in its build cycle via consumePendingTabNavigation().
+  int? _pendingTabIndex;
+
+  void requestTabNavigation(int index) {
+    _pendingTabIndex = index;
+    notifyListeners();
+  }
+
+  /// Returns and clears the pending tab index — called by MainTabScaffold
+  /// so it only switches once, not on every subsequent rebuild.
+  int? consumePendingTabNavigation() {
+    final index = _pendingTabIndex;
+    _pendingTabIndex = null;
+    return index;
+  }
+
   void switchActiveTeam(String teamId) {
     activeTeamId = teamId;
     notifyListeners();
+  }
+
+  /// Called by RootScreen whenever the app receives an incoming URL.
+  /// Parses the invite code and stores it — the UI reacts via the
+  /// notifyListeners() call.
+  void handleDeepLink(Uri uri) {
+    if (uri.scheme == 'accacentral' && uri.host == 'join') {
+      final code = uri.queryParameters['code'];
+      if (code != null && code.isNotEmpty) {
+        pendingInviteCode = code.toUpperCase();
+        notifyListeners();
+      }
+    }
+  }
+
+  /// Called once TeamSetupScreen has read pendingInviteCode and pre-filled
+  /// the field — clears the value so it isn't re-applied on rebuild.
+  void consumeInviteCode() {
+    pendingInviteCode = null;
+    // No notifyListeners() — no UI change needed, just a housekeeping clear.
   }
 
   void _captureNotificationToken() {

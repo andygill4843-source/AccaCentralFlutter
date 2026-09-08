@@ -100,7 +100,7 @@ class _AwardsScreenState extends State<AwardsScreen> {
     final combined = <String>{
       ...seasonsFromGameWeeks,
       ...seasonsFromWinners,
-      if (teamCurrentSeason != null) teamCurrentSeason!,
+      ?teamCurrentSeason,
     }..removeWhere((s) => s.isEmpty);
     allSeasons = combined.toList()..sort((a, b) => b.compareTo(a));
 
@@ -157,7 +157,7 @@ class _AwardsScreenState extends State<AwardsScreen> {
                 ? null
                 : () async {
                     await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
+                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!, appState: widget.appState)),
                     );
                     load();
                   },

@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'app_state.dart';
 import 'firestore_service.dart';
@@ -7,7 +8,8 @@ import 'main.dart'; // for AccaColors
 
 class GameWeekSetupScreen extends StatefulWidget {
   final AppState appState;
-  const GameWeekSetupScreen({super.key, required this.appState});
+  final String teamId;
+  const GameWeekSetupScreen({super.key, required this.appState, required this.teamId});
   @override
   State<GameWeekSetupScreen> createState() => _GameWeekSetupScreenState();
 }
@@ -22,6 +24,8 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
   String? currentSeason;
   GameWeek? activeGameWeek;
   bool isManager = false;
+  Tournament? availableTournament; // an in-progress round not yet attached to any gameweek
+  bool linkToTournament = false;
 
   @override
   void initState() {
@@ -32,31 +36,56 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     loadManagerStatus();
   }
 
+  /// Firestore surfaces a manager-only rules rejection as a
+  /// FirebaseException with code 'permission-denied' — swap that raw error
+  /// for something a non-manager will actually understand. Anything else
+  /// (network issues, etc.) falls back to the original message.
+  String _friendlyError(Object error, String fallback) {
+    if (error is FirebaseException && error.code == 'permission-denied') {
+      return 'Only manager profiles can update gameweeks.';
+    }
+    return fallback;
+  }
+
   Future<void> loadManagerStatus() async {
-    final teamId = widget.appState.currentUser?.teamIds.first;
     final userId = widget.appState.currentUser?.id;
-    if (teamId == null || userId == null) return;
-    final member = await FirestoreService.instance.fetchMember(teamId: teamId, userId: userId);
+    if (userId == null) return;
+    final member = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
     if (mounted) setState(() => isManager = member?.role == MemberRole.manager);
   }
 
   Future<void> loadCurrentSeason() async {
-    final teamId = widget.appState.currentUser?.teamIds.first;
-    if (teamId == null) return;
-    final team = await FirestoreService.instance.fetchTeam(teamId);
-    if (mounted) setState(() => currentSeason = team?.season);
+    final team = await FirestoreService.instance.fetchTeam(widget.teamId);
+    if (!mounted) return;
+    setState(() => currentSeason = team?.season);
+    if (team != null) await loadAvailableTournamentRound(team.season);
+  }
+
+  /// A round only shows up as available once it's actually been drawn
+  /// (currentRoundSize set) and hasn't already been linked to a different
+  /// gameweek — the whole round attaches at once, so once it's attached,
+  /// it's no longer offered here.
+  Future<void> loadAvailableTournamentRound(String season) async {
+    final tournament = await FirestoreService.instance.fetchTournament(teamId: widget.teamId, season: season);
+    if (tournament == null || tournament.status != TournamentStatus.inProgress || tournament.currentRoundSize == null) {
+      if (mounted) setState(() => availableTournament = null);
+      return;
+    }
+    final alreadyAttached = await FirestoreService.instance.isTournamentRoundAttached(
+      teamId: widget.teamId,
+      tournamentId: tournament.id!,
+      roundSize: tournament.currentRoundSize!,
+    );
+    if (mounted) setState(() => availableTournament = alreadyAttached ? null : tournament);
   }
 
   Future<void> loadActiveGameWeek() async {
-    final teamId = widget.appState.currentUser?.teamIds.first;
-    if (teamId == null) return;
-    final gameWeek = await FirestoreService.instance.fetchActiveGameWeek(teamId);
+    final gameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
     if (mounted) setState(() => activeGameWeek = gameWeek);
   }
 
   Future<void> suggestNextWeekNumber() async {
-    final teamId = widget.appState.currentUser?.teamIds.first;
-    if (teamId == null) return;
+    final teamId = widget.teamId;
     final team = await FirestoreService.instance.fetchTeam(teamId);
     final existing = await FirestoreService.instance.fetchGameWeeks(teamId);
     final currentSeasonGameWeeks = existing.where((g) => g.season == team?.season).toList();
@@ -87,8 +116,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
   }
 
   Future<void> create() async {
-    final teamId = widget.appState.currentUser?.teamIds.first;
-    if (teamId == null) return;
+    final teamId = widget.teamId;
     if (!endDate.isAfter(startDate)) {
       setState(() => errorMessage = 'The last match window must end after the first kickoff.');
       return;
@@ -126,19 +154,29 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         season: (await FirestoreService.instance.fetchTeam(teamId))?.season ?? '2026-27',
       );
       await FirestoreService.instance.createGameWeek(gameWeek);
+      if (linkToTournament && availableTournament?.id != null && availableTournament?.currentRoundSize != null) {
+        final newGameWeek = await FirestoreService.instance.fetchActiveGameWeek(teamId);
+        if (newGameWeek?.id != null) {
+          await FirestoreService.instance.attachTournamentRoundToGameWeek(
+            teamId: teamId,
+            tournamentId: availableTournament!.id!,
+            roundSize: availableTournament!.currentRoundSize!,
+            gameWeekId: newGameWeek!.id!,
+          );
+        }
+      }
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       setState(() {
         isLoading = false;
-        errorMessage = e.toString();
+        errorMessage = _friendlyError(e, e.toString());
       });
     }
   }
 
   Future<void> endCurrentGameWeek() async {
     if (activeGameWeek == null || activeGameWeek!.id == null) return;
-    final teamId = widget.appState.currentUser?.teamIds.first;
-    if (teamId == null) return;
+    final teamId = widget.teamId;
     final allSettled = await FirestoreService.instance.areAllLegsSettled(
       teamId: teamId,
       gameWeekId: activeGameWeek!.id!,
@@ -151,7 +189,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         content: Text(
           allSettled
               ? 'This ends Week ${activeGameWeek!.weekNumber}. Selections will close.'
-              : "Not every leg has settled yet, so points may not be final. This ends Week ${activeGameWeek!.weekNumber} anyway — selections will close.",
+              : 'Not all gameweek games have been settled. Please refer to the manual settlement tab. Continuing will mean not all gameweek results are correctly reflected in the output. Do you want to continue?',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
@@ -169,7 +207,8 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       suggestNextWeekNumber();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error ending gameweek: ${e.toString()}')));
+        final message = _friendlyError(e, 'Error ending gameweek: ${e.toString()}');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       }
     }
   }
@@ -189,9 +228,10 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       initialTime: TimeOfDay.fromDateTime(initial),
       initialEntryMode: TimePickerEntryMode.input,
     );
-    if (time == null) return;
+    if (time == null || !mounted) return;
     final newDeadline = DateTime(date.year, date.month, date.day, time.hour, time.minute);
     if (newDeadline.isAfter(activeGameWeek!.endDate)) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Deadline can't be after the last match window ends.")),
       );
@@ -208,7 +248,8 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       loadActiveGameWeek();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error updating deadline: ${e.toString()}')));
+        final message = _friendlyError(e, 'Error updating deadline: ${e.toString()}');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       }
     }
   }
@@ -216,7 +257,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
   Future<void> endSeason() async {
     final userId = widget.appState.currentUser?.id;
     if (userId == null) return;
-    final teamId = widget.appState.currentUser!.teamIds.first;
+    final teamId = widget.teamId;
     final team = await FirestoreService.instance.fetchTeam(teamId);
     if (team == null || !mounted) return;
     final members = await FirestoreService.instance.fetchMembers(teamId);
@@ -236,6 +277,9 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     final newSeasonController = TextEditingController();
     int dialogMaxChallenges = 2;
     int dialogMaxPhysioSessions = 2;
+    bool dialogSetupTournament = false;
+    final dialogTournamentNameController = TextEditingController();
+    DateTime? dialogTournamentDrawDateTime;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -276,6 +320,49 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
                     if (v != null) setDialogState(() => dialogMaxPhysioSessions = v);
                   },
                 ),
+                const SizedBox(height: 16),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Set up a knockout tournament this season?'),
+                  value: dialogSetupTournament,
+                  onChanged: (v) => setDialogState(() => dialogSetupTournament = v),
+                ),
+                if (dialogSetupTournament) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: dialogTournamentNameController,
+                    decoration: const InputDecoration(labelText: 'Tournament name'),
+                  ),
+                  const SizedBox(height: 10),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      dialogTournamentDrawDateTime == null
+                          ? 'Set draw date & time'
+                          : 'Draw: ${formatDateTime(dialogTournamentDrawDateTime!)}',
+                    ),
+                    trailing: const Icon(Icons.calendar_today),
+                    onTap: () async {
+                      final initial = dialogTournamentDrawDateTime ?? DateTime.now().add(const Duration(days: 7));
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: initial,
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (date == null || !context.mounted) return;
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.fromDateTime(initial),
+                        initialEntryMode: TimePickerEntryMode.input,
+                      );
+                      if (time == null) return;
+                      setDialogState(() {
+                        dialogTournamentDrawDateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+                      });
+                    },
+                  ),
+                ],
               ],
             ),
           ),
@@ -284,6 +371,10 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
             TextButton(
               onPressed: () {
                 if (newSeasonController.text.trim().isEmpty) return;
+                if (dialogSetupTournament &&
+                    (dialogTournamentNameController.text.trim().isEmpty || dialogTournamentDrawDateTime == null)) {
+                  return;
+                }
                 Navigator.pop(context, true);
               },
               child: const Text('End season'),
@@ -295,6 +386,31 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     if (confirmed != true || newSeasonController.text.trim().isEmpty) return;
     final newSeasonName = newSeasonController.text.trim();
     try {
+      // Generate season summaries for every member BEFORE the season
+      // data changes — all current-season legs, gameweeks, and tournament
+      // data must still be in place when this runs.
+      final allLegs = await FirestoreService.instance.fetchLegs(teamId);
+      final allGameWeeks = await FirestoreService.instance.fetchGameWeeks(teamId);
+      final allChallenges = await FirestoreService.instance.fetchChallenges(teamId: teamId, season: team.season);
+      final seasonGameWeekIds = allGameWeeks.where((g) => g.season == team.season).map((g) => g.id).toSet();
+      final seasonLegs = allLegs.where((l) => seasonGameWeekIds.contains(l.gameWeekId)).toList();
+      final seasonGameWeeks = allGameWeeks.where((g) => g.season == team.season).toList();
+      final allMembers = await FirestoreService.instance.fetchMembers(teamId);
+      final tournament = await FirestoreService.instance.fetchTournament(teamId: teamId, season: team.season);
+      List<TournamentMatch> tournamentMatches = [];
+      if (tournament?.id != null) {
+        tournamentMatches = await FirestoreService.instance.fetchTournamentMatches(teamId: teamId, tournamentId: tournament!.id!);
+      }
+      await FirestoreService.instance.generateSeasonSummaries(
+        teamId: teamId,
+        season: team.season,
+        members: allMembers,
+        legs: seasonLegs,
+        gameWeeks: seasonGameWeeks,
+        challenges: allChallenges,
+        tournament: tournament,
+        tournamentMatches: tournamentMatches,
+      );
       await FirestoreService.instance.endSeason(
         teamId: teamId,
         currentSeason: team.season,
@@ -308,6 +424,15 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         maxPhysioSessionsPerMember: dialogMaxPhysioSessions,
         createdAt: DateTime.now(),
       ));
+      if (dialogSetupTournament && dialogTournamentDrawDateTime != null) {
+        await FirestoreService.instance.createTournament(Tournament(
+          teamId: teamId,
+          season: newSeasonName,
+          name: dialogTournamentNameController.text.trim(),
+          drawDateTime: dialogTournamentDrawDateTime!,
+          createdAt: DateTime.now(),
+        ));
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${winner.displayName} crowned champion of ${team.season}!')),
@@ -316,7 +441,8 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error ending season: ${e.toString()}')));
+        final message = _friendlyError(e, 'Error ending season: ${e.toString()}');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       }
     }
   }
@@ -354,7 +480,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
                     ),
                     const SizedBox(width: 8),
                           OutlinedButton(
-                            onPressed: editActiveGameWeekDeadline,
+                            onPressed: endSeason,
                             style: OutlinedButton.styleFrom(
                               side: const BorderSide(color: AccaColors.gold),
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -466,6 +592,19 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
               subtitle: Text(formatDateTime(deadline)),
               onTap: () => pickDateField(() => deadline, (d) => deadline = d),
             ),
+            if (availableTournament != null) ...[
+              const SizedBox(height: 8),
+              SwitchListTile(
+                tileColor: AccaColors.surface,
+                title: Text(
+                  'Part of ${availableTournament!.name} '
+                  '(${tournamentRoundLabel(availableTournament!.currentRoundSize!)})?',
+                  style: const TextStyle(fontSize: 13),
+                ),
+                value: linkToTournament,
+                onChanged: (v) => setState(() => linkToTournament = v),
+              ),
+            ],
             if (errorMessage != null) ...[
               const SizedBox(height: 16),
               Text(errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 13)),

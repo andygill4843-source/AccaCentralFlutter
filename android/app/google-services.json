@@ -7,12 +7,17 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:634734461787:android:1f041c495995670393d07e",
+        "mobilesdk_app_id": "1:634734461787:android:dc4b2bf935bf700c93d07e",
         "android_client_info": {
-          "package_name": "com.example.acca_central"
+          "package_name": "com.accacentral.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "634734461787-rjoqrf38mqtboldtkmtdsqsqr6nds103.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBaeg-bkVH--EMxYXY4ov6V5suxArKT4Zc"
@@ -20,7 +25,55 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "634734461787-rjoqrf38mqtboldtkmtdsqsqr6nds103.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "634734461787-cph1ke84ohfec3h7dib3h8h1m8gs5qhp.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.accaCentral"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:634734461787:android:1f041c495995670393d07e",
+        "android_client_info": {
+          "package_name": "com.example.acca_central"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "634734461787-rjoqrf38mqtboldtkmtdsqsqr6nds103.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBaeg-bkVH--EMxYXY4ov6V5suxArKT4Zc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "634734461787-rjoqrf38mqtboldtkmtdsqsqr6nds103.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "634734461787-cph1ke84ohfec3h7dib3h8h1m8gs5qhp.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.accaCentral"
+              }
+            }
+          ]
         }
       }
     }

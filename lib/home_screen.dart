@@ -10,8 +10,6 @@ import 'place_challenge_screen.dart';
 import 'package:collection/collection.dart';
 import 'notifications_screen.dart';
 import 'submission_gauge.dart';
-
-
 class _MemberGameWeekPerformance {
   final String memberId;
   final String displayName;
@@ -26,30 +24,23 @@ class _MemberGameWeekPerformance {
     this.positionDelta,
   });
 }
-
-
 class HomeScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
   final void Function(int tabIndex) onNavigateToTab;
   final int refreshToken;
-
   const HomeScreen({super.key, required this.appState, required this.teamId, required this.onNavigateToTab, this.refreshToken = 0});
-
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
-
 class _HomeScreenState extends State<HomeScreen> {
   bool isLoading = true;
   String? errorMessage;
-
   GameWeek? activeGameWeek;
   int? nextWeekNumber;
   DateTime? nextDeadline;
   bool hasActiveGameWeek = false;
   bool hasChallengedThisWeek = false;
-
   Member? currentMember;
   List<Member> members = [];
   List<AccumulatorLeg> activeWeekLegs = [];
@@ -63,13 +54,12 @@ class _HomeScreenState extends State<HomeScreen> {
   int myChallengesRemaining = 2;
   int unreadNotifications = 0;
   List<PhysioSession> squadActivityPhysioSessions = [];
-
+  List<Reaction> activeWeekReactions = [];
   @override
   void initState() {
     super.initState();
     load();
   }
-
   List<_MemberGameWeekPerformance> get biggestPositionShiftsUp {
     final risers = lastGameweekPerformance.where((p) => (p.positionDelta ?? 0) > 0).toList();
     if (risers.isEmpty) return [];
@@ -77,7 +67,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final tied = risers.where((p) => p.positionDelta == maxDelta).toList()..shuffle();
     return tied.take(2).toList();
   }
-
   List<_MemberGameWeekPerformance> get biggestPositionShiftsDown {
     final fallers = lastGameweekPerformance.where((p) => (p.positionDelta ?? 0) < 0).toList();
     if (fallers.isEmpty) return [];
@@ -85,7 +74,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final tied = fallers.where((p) => p.positionDelta == minDelta).toList()..shuffle();
     return tied.take(2).toList();
   }
-
   @override
   void didUpdateWidget(covariant HomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -93,21 +81,19 @@ class _HomeScreenState extends State<HomeScreen> {
       load();
     }
   }
-
   Future<void> nudge(Member member) async {
     if (member.id == null) return;
     await FirestoreService.instance.sendNotification(
       teamId: widget.teamId,
       recipientMemberIds: [member.id!],
       type: NotificationType.nudge,
-      title: 'Nudge!',
+      title: '🫵 Nudge! 🫵',
       body: '${currentMember?.displayName ?? 'A teammate'} nudged you to pick your leg before the deadline.',
     );
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nudge sent to ${member.displayName}.')));
     }
   }
-
   Future<void> load() async {
     setState(() {
       isLoading = true;
@@ -122,7 +108,6 @@ class _HomeScreenState extends State<HomeScreen> {
       final gameWeeks = await FirestoreService.instance.fetchGameWeeks(widget.teamId);
       final fines = await FirestoreService.instance.fetchFines(widget.teamId);
       final physioSessions = await FirestoreService.instance.fetchPhysioSessions(widget.teamId);
-
       Member? me;
       if (userId != null) {
         try {
@@ -131,7 +116,6 @@ class _HomeScreenState extends State<HomeScreen> {
           me = null;
         }
       }
-
       final challenges = await FirestoreService.instance.fetchChallenges(teamId: widget.teamId, season: team?.season ?? '');
       final seasonSettings = await FirestoreService.instance.fetchSeasonSettings(teamId: widget.teamId, season: team?.season ?? '');
       final maxChallenges = seasonSettings?.maxChallengesPerMember ?? 2;
@@ -142,16 +126,13 @@ class _HomeScreenState extends State<HomeScreen> {
       final challengedThisWeek = me?.id != null && gameWeek?.id != null
           ? challenges.any((c) => c.challengerMemberId == me!.id && c.gameWeekId == gameWeek!.id)
           : false;
-
       final unreadCount = me?.id != null
           ? await FirestoreService.instance.fetchUnreadNotificationCount(teamId: widget.teamId, memberId: me!.id!)
           : 0;
-
       final currentSeasonGameWeeks = gameWeeks.where((g) => g.season == team?.season).toList();
       final currentSeasonGameWeekIds = currentSeasonGameWeeks.map((g) => g.id).toSet();
       final currentSeasonLegs = allLegs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
       final table = ScoringEngine.buildLeagueTable(members: loadedMembers, legs: currentSeasonLegs, challenges: challenges);
-
       LeagueTableEntry? mine;
       int? offThird;
       if (me?.id != null) {
@@ -164,7 +145,6 @@ class _HomeScreenState extends State<HomeScreen> {
           mine = null;
         }
       }
-
       // Biggest weighted-points winner from the most recently SETTLED gameweek.
             // Per-member points + position swing from the most recently SETTLED gameweek,
       // and everything (fines/challenges) that's happened since it started.
@@ -214,7 +194,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 positionDelta: positionDeltaByMember[member.id!],
               ),
         ]..sort((a, b) => b.basePoints != a.basePoints ? b.basePoints.compareTo(a.basePoints) : b.weightedPoints.compareTo(a.weightedPoints));
-
         final windowStart = lastWeek.startDate;
         activityFines = fines.where((f) => f.createdAt.isAfter(windowStart)).toList()
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -226,12 +205,15 @@ class _HomeScreenState extends State<HomeScreen> {
       final myFineCount = me?.id != null
           ? fines.where((f) => f.memberId == me!.id && f.countsTowardTally).length
           : 0;
-
       List<AccumulatorLeg> weekLegs = [];
+      List<Reaction> weekReactions = [];
       if (gameWeek?.id != null) {
-        weekLegs = allLegs.where((l) => l.gameWeekId == gameWeek!.id).toList();
+        weekLegs = allLegs.where((l) => l.gameWeekId == gameWeek!.id && !l.isSecondaryTournamentLeg).toList();
+        weekReactions = await FirestoreService.instance.fetchReactionsForGameWeek(
+          teamId: widget.teamId,
+          gameWeekId: gameWeek!.id!,
+        );
       }
-
       if (mounted) {
         setState(() {
           activeGameWeek = gameWeek;
@@ -241,6 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
           currentMember = me;
           members = loadedMembers;
           activeWeekLegs = weekLegs;
+          activeWeekReactions = weekReactions;
           fullTable = table;
           myEntry = mine;
           pointsOffThird = offThird;
@@ -264,9 +247,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
   }
-
   String _formatDate(DateTime dt) => '${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-
     @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -285,7 +266,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ? null
                 : () async {
                     await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
+                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!, appState: widget.appState)),
                     );
                     load(); // refresh count after viewing
                   },
@@ -330,13 +311,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
     );
   }
-
   Widget _statusBox() {
     if (hasActiveGameWeek && !(activeGameWeek?.isLocked ?? false)) return _submissionStatusBox();
     if (hasActiveGameWeek && (activeGameWeek?.isLocked ?? false)) return _lockedLegsBox();
     return _noActiveGameWeekSummary();
   }
-
     // State 1: active gameweek, not yet locked — who's picked, who hasn't.
   Widget _submissionStatusBox() {
     final deadline = activeGameWeek?.deadline;
@@ -404,7 +383,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ],
     );
   }
-
   // State 2: active gameweek, locked — everyone's actual pick + Challenge stub.
   Widget _lockedLegsBox() {
     return Container(
@@ -434,70 +412,184 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
           const SizedBox(height: 12),
           for (final leg in activeWeekLegs)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Row(
-                children: [
-                  const Icon(Icons.sports_soccer, size: 16, color: AccaColors.gold),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          members.firstWhere((m) => m.id == leg.memberId, orElse: () => Member(userId: '', displayName: 'Unknown', teamId: widget.teamId, joinedAt: DateTime.now())).displayName,
-                          style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.black),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.sports_soccer, size: 16, color: AccaColors.gold),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              members.firstWhere((m) => m.id == leg.memberId, orElse: () => Member(userId: '', displayName: 'Unknown', teamId: widget.teamId, joinedAt: DateTime.now())).displayName,
+                              style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.black),
+                            ),
+                            Text(leg.selectionDescription, style: const TextStyle(fontSize: 12, color: Colors.black87)),
+                          ],
                         ),
-                        Text(leg.selectionDescription, style: const TextStyle(fontSize: 12, color: Colors.black87)),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    margin: const EdgeInsets.symmetric(horizontal: 6),
-                    decoration: BoxDecoration(color: AccaColors.gold, borderRadius: BorderRadius.circular(6)),
-                    child: Text(decimalToFractional(leg.decimalOddsAtSelection), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-                  ),
-                  if (DateTime.now().isBefore(leg.kickoff))
-                  SizedBox(                  
-                    width: 78,
-                    child: ElevatedButton(
-                      onPressed: (currentMember?.id == leg.memberId || myChallengesRemaining <= 0 || hasChallengedThisWeek)
-                        ? null
-                        : () async {
-                            final myLeg = activeWeekLegs.where((l) => l.memberId == currentMember?.id).firstOrNull;
-                            final challengedName = members
-                                .firstWhere((m) => m.id == leg.memberId, orElse: () => Member(userId: '', displayName: 'Unknown', teamId: widget.teamId, joinedAt: DateTime.now()))
-                                .displayName;
-                            final placed = await Navigator.of(context).push<bool>(
-                              MaterialPageRoute(
-                                builder: (_) => PlaceChallengeScreen(
-                                  teamId: widget.teamId,
-                                  season: activeGameWeek?.season ?? '',
-                                  gameWeek: activeGameWeek!,
-                                  challengedLeg: leg,
-                                  challengedMemberName: challengedName,
-                                  challenger: currentMember!,
-                                  challengerLeg: myLeg,
-                                  challengesRemaining: myChallengesRemaining,
-                                  alreadyChallengedThisWeek: hasChallengedThisWeek,
-                                ),
-                              ),
-                            );
-                            if (placed == true) load();
-                          },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AccaColors.gold,
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
                       ),
-                      child: const Text('Challenge', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                    ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        margin: const EdgeInsets.symmetric(horizontal: 6),
+                        decoration: BoxDecoration(color: AccaColors.gold, borderRadius: BorderRadius.circular(6)),
+                        child: Text(decimalToFractional(leg.decimalOddsAtSelection), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+                      ),
+                      if (DateTime.now().isBefore(leg.kickoff))
+                      SizedBox(                  
+                        width: 78,
+                        child: ElevatedButton(
+                          onPressed: (currentMember?.id == leg.memberId || myChallengesRemaining <= 0 || hasChallengedThisWeek)
+                            ? null
+                            : () async {
+                                final myLeg = activeWeekLegs.where((l) => l.memberId == currentMember?.id).firstOrNull;
+                                final challengedName = members
+                                    .firstWhere((m) => m.id == leg.memberId, orElse: () => Member(userId: '', displayName: 'Unknown', teamId: widget.teamId, joinedAt: DateTime.now()))
+                                    .displayName;
+                                final placed = await Navigator.of(context).push<bool>(
+                                  MaterialPageRoute(
+                                    builder: (_) => PlaceChallengeScreen(
+                                      teamId: widget.teamId,
+                                      season: activeGameWeek?.season ?? '',
+                                      gameWeek: activeGameWeek!,
+                                      challengedLeg: leg,
+                                      challengedMemberName: challengedName,
+                                      challenger: currentMember!,
+                                      challengerLeg: myLeg,
+                                      challengesRemaining: myChallengesRemaining,
+                                      alreadyChallengedThisWeek: hasChallengedThisWeek,
+                                    ),
+                                  ),
+                                );
+                                if (placed == true) load();
+                              },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AccaColors.gold,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                          ),
+                          child: const Text('Challenge', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                if (leg.id != null) _reactionRow(leg),
+              ],
             ),
         ],
+      ),
+    );
+  }
+  void _showReactors(BuildContext context, String emoji, List<Reaction> legReactions) {
+    final reactors = legReactions.where((r) => r.emoji == emoji).map((r) => r.reactorName).toList();
+    if (reactors.isEmpty) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('$emoji Reactions'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: reactors.map((name) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Text(name, style: const TextStyle(fontSize: 15)),
+          )).toList(),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+      ),
+    );
+  }
+
+  static const List<String> _kudosEmojis = ['👍', '❤️', '😂'];
+
+  Future<void> _react(AccumulatorLeg leg, String emoji) async {
+    if (currentMember?.id == null || leg.id == null) return;
+    await FirestoreService.instance.toggleReaction(
+      teamId: widget.teamId,
+      legId: leg.id!,
+      gameWeekId: leg.gameWeekId,
+      reactorMemberId: currentMember!.id!,
+      reactorName: currentMember!.displayName,
+      recipientMemberId: leg.memberId,
+      emoji: emoji,
+    );
+    load();
+  }
+
+  Widget _reactionRow(AccumulatorLeg leg) {
+    final legReactions = activeWeekReactions.where((r) => r.legId == leg.id).toList();
+    // Names summary — e.g. "👍 Andy, John  ❤️ Sara"
+    final nameParts = <String>[];
+    for (final emoji in _kudosEmojis) {
+      final names = legReactions.where((r) => r.emoji == emoji).map((r) => r.reactorName).toList();
+      if (names.isNotEmpty) nameParts.add('$emoji ${names.join(', ')}');
+    }
+    return Padding(
+      padding: const EdgeInsets.only(left: 40, bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              for (final emoji in _kudosEmojis) ...[
+                const SizedBox(width: 4),
+                _emojiChip(leg, emoji, legReactions),
+              ],
+            ],
+          ),
+          if (nameParts.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              nameParts.join('   '),
+              style: const TextStyle(fontSize: 11, color: Colors.black54),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _emojiChip(AccumulatorLeg leg, String emoji, List<Reaction> legReactions) {
+    final count = legReactions.where((r) => r.emoji == emoji).length;
+    final myReaction = legReactions.any(
+      (r) => r.emoji == emoji && r.reactorMemberId == currentMember?.id,
+    );
+    return GestureDetector(
+      onTap: () {
+        if (count > 0 && !myReaction) {
+          // Show who reacted before committing to adding your own.
+          _showReactors(context, emoji, legReactions);
+        } else {
+          _react(leg, emoji);
+        }
+      },
+      onLongPress: () => _showReactors(context, emoji, legReactions),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: myReaction ? AccaColors.gold.withValues(alpha: 0.2) : Colors.black.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: myReaction ? AccaColors.gold : Colors.black26,
+            width: myReaction ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 14)),
+            if (count > 0) ...[
+              const SizedBox(width: 4),
+              Text('$count', style: const TextStyle(fontSize: 12, color: Colors.black87)),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -535,7 +627,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
   List<Widget> _squadActivityContent() {
     final upShifts = biggestPositionShiftsUp;
     final downShifts = biggestPositionShiftsDown;
@@ -573,7 +664,6 @@ class _HomeScreenState extends State<HomeScreen> {
   // State 5: no active gameweek — team summary.
   Widget _noActiveGameWeekSummary() {
     final top3 = fullTable.take(3).toList();
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),

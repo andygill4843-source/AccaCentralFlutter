@@ -62,7 +62,8 @@ class PoissonComboService {
     }
 
     final maxAchievableBtts = bttsAt(0.5);
-    final targetBtts = trueBttsProb > maxAchievableBtts ? maxAchievableBtts : trueBttsProb;
+    final targetBtts =
+        trueBttsProb > maxAchievableBtts ? maxAchievableBtts : trueBttsProb;
 
     double lowF = 0.001, highF = 0.5;
     for (var i = 0; i < 40; i++) {
@@ -74,12 +75,16 @@ class PoissonComboService {
       }
     }
     final f = (lowF + highF) / 2;
-
     final lambdaA = f * lambdaTotal;
     final lambdaB = (1 - f) * lambdaTotal;
+
     if (lambdaA <= 0 || lambdaB <= 0) return null;
 
-    double bttsYesOverProb = 0, bttsYesUnderProb = 0, bttsNoOverProb = 0, bttsNoUnderProb = 0;
+    double bttsYesOverProb = 0,
+        bttsYesUnderProb = 0,
+        bttsNoOverProb = 0,
+        bttsNoUnderProb = 0;
+
     for (var h = 0; h <= _maxGoals; h++) {
       for (var a = 0; a <= _maxGoals; a++) {
         final p = _poissonPmf(lambdaA, h) * _poissonPmf(lambdaB, a);
@@ -92,7 +97,10 @@ class PoissonComboService {
       }
     }
 
-    if (bttsYesOverProb <= 0 || bttsYesUnderProb <= 0 || bttsNoOverProb <= 0 || bttsNoUnderProb <= 0) return null;
+    if (bttsYesOverProb <= 0 ||
+        bttsYesUnderProb <= 0 ||
+        bttsNoOverProb <= 0 ||
+        bttsNoUnderProb <= 0) { return null; }
 
     return ComboEstimate(
       bttsYesOver25: 1 / bttsYesOverProb,

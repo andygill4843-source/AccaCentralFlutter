@@ -7,6 +7,7 @@ import 'app_state.dart';
 import 'profile_screen.dart';
 import 'notifications_screen.dart';
 import 'models.dart';
+import 'tournament_view.dart';
 
 class LeagueTableTab extends StatefulWidget {
   final AppState appState;
@@ -31,6 +32,9 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
   // --- Graph state ---
   Set<String>? _selectedMemberIds; // null = show every member
   int? _touchedGameWeek; // gameweek currently highlighted by a tap, null = none
+
+  // --- League/Cup toggle ---
+  _LeagueTableViewMode _viewMode = _LeagueTableViewMode.league;
 
   static const _brandGreen = Color(0xFF00E676); // swap for your real AccaColors green if you have one
 
@@ -147,7 +151,7 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
                 ? null
                 : () async {
                     await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
+                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!, appState: widget.appState)),
                     );
                     load();
                   },
@@ -161,24 +165,45 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
         ],
       ),
       backgroundColor: AccaColors.background,
-      body: RefreshIndicator(
-        onRefresh: load,
-        child: isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : errorMessage != null
-                ? Center(child: Text(errorMessage!, style: const TextStyle(color: Colors.red)))
-                : entries.isEmpty
-                    ? const Center(child: Text('No members found for this team.'))
-                    : SingleChildScrollView(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          children: [
-                            _frozenColumnTable(),
-                            const SizedBox(height: 24),
-                            _positionChart(),
-                          ],
-                        ),
-                      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: SegmentedButton<_LeagueTableViewMode>(
+              segments: const [
+                ButtonSegment(value: _LeagueTableViewMode.league, label: Text('League')),
+                ButtonSegment(value: _LeagueTableViewMode.cup, label: Text('Cup')),
+              ],
+              selected: {_viewMode},
+              onSelectionChanged: (selection) => setState(() => _viewMode = selection.first),
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: load,
+              child: _viewMode == _LeagueTableViewMode.cup
+                  ? SingleChildScrollView(
+                      child: TournamentView(appState: widget.appState, teamId: widget.teamId),
+                    )
+                  : isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : errorMessage != null
+                          ? Center(child: Text(errorMessage!, style: const TextStyle(color: Colors.red)))
+                          : entries.isEmpty
+                              ? const Center(child: Text('No members found for this team.'))
+                              : SingleChildScrollView(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Column(
+                                    children: [
+                                      _frozenColumnTable(),
+                                      const SizedBox(height: 24),
+                                      _positionChart(),
+                                    ],
+                                  ),
+                                ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -297,12 +322,25 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
     return Container(height: _rowHeight, width: width, alignment: Alignment.center, child: content);
   }
 
-  /// Evenly-spaced hues so any number of members gets a visually distinct colour,
-  /// rather than a fixed 7-colour list that repeats once you pass 7 members.
-  Color _memberColor(int index, int total) {
-    final hue = (index * (360 / (total == 0 ? 1 : total))) % 360;
-    return HSLColor.fromAHSL(1, hue, 0.65, 0.5).toColor();
-  }
+  /// Fixed palette of visually distinct colors — covers up to 12 members
+  /// without repetition. Beyond 12 it cycles, but a team that size is
+  /// unusual enough that slight repetition is acceptable.
+  static const List<Color> _memberPalette = [
+    Color(0xFF00E676), // green (brand)
+    Color(0xFF2196F3), // blue
+    Color(0xFFFF5722), // deep orange
+    Color(0xFFE91E63), // pink
+    Color(0xFF9C27B0), // purple
+    Color(0xFFFFEB3B), // yellow
+    Color(0xFF00BCD4), // cyan
+    Color(0xFFFF9800), // orange
+    Color(0xFF8BC34A), // light green
+    Color(0xFFF44336), // red
+    Color(0xFF3F51B5), // indigo
+    Color(0xFF009688), // teal
+  ];
+
+  Color _memberColor(int index, int total) => _memberPalette[index % _memberPalette.length];
 
   Widget _memberFilterChips() {
     final allSelected = _selectedMemberIds == null;
@@ -382,7 +420,7 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
               LineChartData(
                 minY: 1,
                 maxY: worstPosition.toDouble(),
-                minX: 1,
+                minX: 0,
                 maxX: weeks.isEmpty ? 2 : weeks.last.toDouble(),
                 backgroundColor: Colors.transparent,
                 gridData: FlGridData(
@@ -411,7 +449,7 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
                       showTitles: true,
                       interval: 1,
                       getTitlesWidget: (v, _) => Text(
-                        '${v.toInt()}',
+                        v.toInt() == 0 ? '' : '${v.toInt()}',
                         style: const TextStyle(fontSize: 10, color: Colors.white),
                       ),
                     ),
@@ -452,7 +490,7 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
                               alignment: Alignment.topRight,
                               padding: const EdgeInsets.only(bottom: 4, left: 4),
                               style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _brandGreen),
-                              labelResolver: (line) => 'GW${_touchedGameWeek}',
+                              labelResolver: (line) => 'GW$_touchedGameWeek',
                             ),
                           ),
                         ],
@@ -475,6 +513,10 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
                         ),
                       ),
                       spots: [
+                        // Synthetic starting point — everyone begins at
+                        // the same position at the origin before any
+                        // gameweek has been settled.
+                        FlSpot(0, 1),
                         for (final week in weeks)
                           FlSpot(
                             week.toDouble(),
@@ -511,3 +553,5 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
     );
   }
 }
+
+enum _LeagueTableViewMode { league, cup }

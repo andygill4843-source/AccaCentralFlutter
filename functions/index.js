@@ -69,3 +69,5 @@ exports.sendPushOnNotification = onDocumentCreated("notifications/{notificationI
     },
   });
 });
+
+exports.liveMatchPoller = require('./livePoller').liveMatchPoller;

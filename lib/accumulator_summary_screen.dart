@@ -5,23 +5,19 @@ import 'firestore_service.dart';
 import 'models.dart';
 import 'main.dart'; // for AccaColors
 import 'odds_format.dart';
-
+import 'odds_orchestrator.dart';
+import 'api_football_service.dart';
 class _BookmakerOption {
   final String bookmaker;
   final double combinedOdds;
-
   _BookmakerOption({required this.bookmaker, required this.combinedOdds});
 }
-
 class AccumulatorSummaryScreen extends StatefulWidget {
   final GameWeek gameWeek;
-
   const AccumulatorSummaryScreen({super.key, required this.gameWeek});
-
   @override
   State<AccumulatorSummaryScreen> createState() => _AccumulatorSummaryScreenState();
 }
-
 class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
   List<AccumulatorLeg> legs = [];
   bool isLoading = true;
@@ -32,7 +28,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
   bool isLocked = false;
   Map<String, String> memberNames = {};
   bool isRejecting = false;
-
+  bool isRefreshing = false;
     static const Map<String, String> _bookmakerHomepages = {
     'Bet365': 'https://www.bet365.com',
     'William Hill': 'https://sports.williamhill.com',
@@ -42,7 +38,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     'Ladbrokes': 'https://ladbrokes.com',
     'Coral': 'https://www.coral.co.uk',
   };
-
   @override
   void initState() {
     super.initState();
@@ -51,7 +46,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     isLocked = widget.gameWeek.isLocked;
     load();
   }
-
   Future<void> load() async {
     if (widget.gameWeek.id == null) return;
     try {
@@ -69,13 +63,51 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
       });
     }
   }
+  /// Re-fetches odds from both APIs for every selected primary leg's fixture.
+  Future<void> refreshAllOdds() async {
+    if (primaryLegs.isEmpty) return;
+    setState(() => isRefreshing = true);
+    int updated = 0;
+    try {
+      final seen = <int>{};
+      for (final leg in primaryLegs) {
+        final fid = leg.apiFootballFixtureId;
+        if (fid == null || !seen.add(fid)) continue;
+        final leagueKey = ApiFootballService.leagueIds.entries
+            .firstWhere((e) => e.value == leg.apiFootballLeagueId,
+                orElse: () => const MapEntry('soccer_epl', 39))
+            .key;
+        await OddsOrchestrator.instance.refresh(
+          apiFootballFixtureId: fid,
+          apiFootballLeagueId: leg.apiFootballLeagueId ?? 39,
+          leagueKey: leagueKey,
+          homeTeam: leg.fixtureDescription.split(' vs ').first,
+          awayTeam: leg.fixtureDescription.split(' vs ').last,
+          kickoff: leg.kickoff,
+        );
+        updated++;
+      }
+      await load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Odds refreshed for $updated fixture${updated == 1 ? '' : 's'}.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't refresh odds: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isRefreshing = false);
+    }
+  }
 
-  Future<void> transferToBookmakerHomepage() async {
-    final url = selectedBookmaker != null ? _bookmakerHomepages[selectedBookmaker] : null;
+  Future<void> transferToBookmakerHomepage() async {    final url = selectedBookmaker != null ? _bookmakerHomepages[selectedBookmaker] : null;
     if (url == null) return;
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
-
   Future<void> rejectLeg(AccumulatorLeg leg) async {
     if (leg.id == null) return;
     setState(() => isRejecting = true);
@@ -85,7 +117,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         teamId: widget.gameWeek.teamId,
         recipientMemberIds: [leg.memberId],
         type: NotificationType.legRejected,
-        title: 'Leg rejected',
+        title: '😳 Leg rejected 😳',
         body: 'Your pick "${leg.selectionDescription}" was rejected for Gameweek ${widget.gameWeek.weekNumber} — please pick again before the deadline.',
       );
       await load();
@@ -99,31 +131,35 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
       if (mounted) setState(() => isRejecting = false);
     }
   }
+  /// Only primary legs count toward bookmaker comparison, the actual
+  /// lock-in, and the shareable leg list — secondary tournament legs exist
+  /// purely for the tournament cascade and were never part of the real
+  /// accumulator bet being placed with a bookmaker. The leg-review list
+  /// below still shows (and allows rejecting) every leg, primary or
+  /// secondary.
+  List<AccumulatorLeg> get primaryLegs => legs.where((l) => !l.isSecondaryTournamentLeg).toList();
 
-  /// Only a bookmaker present on EVERY leg qualifies — you can't place one
-  /// accumulator bet with a bookmaker missing a price on any leg of it.
+  /// Only a bookmaker present on EVERY primary leg qualifies — you can't
+  /// place one accumulator bet with a bookmaker missing a price on any leg
+  /// of it.
   List<_BookmakerOption> get bookmakerOptions {
-    if (legs.isEmpty) return [];
-
-    final bookmakerSets = legs.map((l) => (l.bookmakerPrices ?? {}).keys.toSet()).toList();
+    final relevant = primaryLegs;
+    if (relevant.isEmpty) return [];
+    final bookmakerSets = relevant.map((l) => (l.bookmakerPrices ?? {}).keys.toSet()).toList();
     var common = bookmakerSets.first;
     for (final s in bookmakerSets.skip(1)) {
       common = common.intersection(s);
     }
-
     final options = common.map((bookmaker) {
-      final combined = legs.fold<double>(1.0, (product, leg) => product * ((leg.bookmakerPrices ?? {})[bookmaker] ?? 1.0));
+      final combined = relevant.fold<double>(1.0, (product, leg) => product * ((leg.bookmakerPrices ?? {})[bookmaker] ?? 1.0));
       return _BookmakerOption(bookmaker: bookmaker, combinedOdds: combined);
     }).toList();
-
     options.sort((a, b) => b.combinedOdds.compareTo(a.combinedOdds));
     return options;
   }
-
   Future<void> select(_BookmakerOption option) async {
     if (widget.gameWeek.id == null) return;
-
-    final legMemberIds = legs.map((l) => l.memberId).toSet();
+    final legMemberIds = primaryLegs.map((l) => l.memberId).toSet();
     if (legMemberIds.length < memberNames.length) {
       final proceed = await showDialog<bool>(
         context: context,
@@ -141,7 +177,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         return;
       }
     }
-
     setState(() => isSaving = true);
     try {
       await FirestoreService.instance.setGameWeekBookmaker(
@@ -150,7 +185,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         gameWeekId: widget.gameWeek.id!,
         bookmaker: option.bookmaker,
         combinedOdds: option.combinedOdds,
-        legs: legs,
+        legs: primaryLegs,
       );
       setState(() {
         selectedBookmaker = option.bookmaker;
@@ -168,7 +203,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
       }
     }
   }
-
   Future<void> offerTransfer(_BookmakerOption option) async {
     final action = await showDialog<String>(
       context: context,
@@ -208,14 +242,13 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         break;
     }
   }
-
   String buildLegListText(_BookmakerOption option) {
     final buffer = StringBuffer();
     buffer.writeln('Acca Central — Gameweek ${widget.gameWeek.weekNumber}');
     buffer.writeln('Bookmaker: ${option.bookmaker}');
     buffer.writeln('Combined odds: ${decimalToFractional(option.combinedOdds)}');
     buffer.writeln();
-    for (final leg in legs) {
+    for (final leg in primaryLegs) {
       final name = memberNames[leg.memberId] ?? 'Unknown';
       buffer.writeln('$name: ${leg.selectionDescription}');
       final price = (leg.bookmakerPrices ?? {})[option.bookmaker];
@@ -225,14 +258,12 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     }
     return buffer.toString();
   }
-
   Future<void> copyLegList(_BookmakerOption option) async {
     await Clipboard.setData(ClipboardData(text: buildLegListText(option)));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Leg list copied to clipboard.')));
     }
   }
-
   Future<void> shareViaWhatsApp(_BookmakerOption option) async {
     final text = buildLegListText(option);
     final encoded = Uri.encodeComponent(text);
@@ -247,14 +278,12 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
       }
     }
   }
-
   _BookmakerOption _currentLockedOption() {
     return _BookmakerOption(
       bookmaker: selectedBookmaker!,
       combinedOdds: combinedOdds ?? 0,
     );
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -262,6 +291,19 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
         title: const Text('Best Odds'),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
+        actions: [
+          if (!isLocked)
+            isRefreshing
+                ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                  )
+                : IconButton(
+                    icon: const Icon(Icons.refresh),
+                    tooltip: 'Refresh all odds',
+                    onPressed: refreshAllOdds,
+                  ),
+        ],
       ),
       backgroundColor: AccaColors.background,
       body: isLoading
@@ -293,7 +335,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                         ],
                         if (selectedBookmaker != null) ...[
                           Card(
-                            color: AccaColors.gold.withOpacity(0.15),
+                            color: AccaColors.gold.withValues(alpha: 0.15),
                             child: Padding(
                               padding: const EdgeInsets.all(16),
                               child: Column(
@@ -359,7 +401,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                     ),
     );
   }
-
   Widget _bookmakerCard(_BookmakerOption option) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -391,7 +432,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
       ),
     );
   }
-
   Widget _legReviewCard(AccumulatorLeg leg) {
     final name = leg.id != null ? (memberNames[leg.memberId] ?? 'Unknown') : 'Unknown';
     return Card(
@@ -405,7 +445,22 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name, style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
+                  Row(
+                    children: [
+                      Text(name, style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
+                      if (leg.isSecondaryTournamentLeg) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: AccaColors.gold,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text('Secondary', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AccaColors.primary)),
+                        ),
+                      ],
+                    ],
+                  ),
                   const SizedBox(height: 2),
                   Text(leg.fixtureDescription, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                   Text(leg.selectionDescription, style: const TextStyle(fontSize: 13)),

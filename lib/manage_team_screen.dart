@@ -46,6 +46,55 @@ class _ManageTeamScreenState extends State<ManageTeamScreen> {
     load();
   }
 
+  Future<void> remove(Member member) async {
+    if (member.id == null) return;
+
+    // Guard: can't remove the last manager.
+    final managers = members.where((m) => m.role == MemberRole.manager).toList();
+    if (member.role == MemberRole.manager && managers.length <= 1) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Can't remove the only manager — promote someone else first.")),
+        );
+      }
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove member'),
+        content: Text(
+          "Remove ${member.displayName} from the team? Their historical selections and stats will remain, but they will lose access.",
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: AccaColors.loss),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await FirestoreService.instance.removeMember(
+        teamId: widget.teamId,
+        memberId: member.id!,
+        userId: member.userId,
+      );
+      load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't remove member: $e")),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -61,19 +110,32 @@ class _ManageTeamScreenState extends State<ManageTeamScreen> {
               ? Center(child: Text(errorMessage!, style: const TextStyle(color: Colors.red)))
               : ListView.separated(
                   itemCount: members.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     final member = members[index];
                     final isManager = member.role == MemberRole.manager;
                     return ListTile(
                       title: Text(member.displayName),
                       subtitle: Text(isManager ? 'Manager' : 'Squad member'),
-                      trailing: isManager
-                          ? const Icon(Icons.shield, color: AccaColors.gold)
-                          : OutlinedButton(
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isManager)
+                            const Icon(Icons.shield, color: AccaColors.gold)
+                          else
+                            OutlinedButton(
                               onPressed: () => promote(member),
                               child: const Text('Make manager'),
                             ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: const Icon(Icons.person_remove_outlined),
+                            color: AccaColors.loss,
+                            tooltip: 'Remove from team',
+                            onPressed: () => remove(member),
+                          ),
+                        ],
+                      ),
                     );
                   },
                 ),

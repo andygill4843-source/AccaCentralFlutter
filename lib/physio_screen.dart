@@ -7,9 +7,7 @@ import 'models.dart';
 import 'main.dart'; // for AccaColors
 import 'profile_screen.dart';
 import 'notifications_screen.dart';
-
 enum FitnessStatus { inForm, fullyFit, minorKnock, majorSurgery, fitToPick }
-
 extension FitnessStatusInfo on FitnessStatus {
   String get label {
     switch (this) {
@@ -20,17 +18,15 @@ extension FitnessStatusInfo on FitnessStatus {
       case FitnessStatus.fitToPick: return 'Fit To Pick';
     }
   }
-
   IconData get icon {
     switch (this) {
-      case FitnessStatus.inForm: return Icons.emoji_events; // crown-style
+      case FitnessStatus.inForm: return Icons.emoji_events;
       case FitnessStatus.fullyFit: return Icons.star;
       case FitnessStatus.minorKnock: return Icons.arrow_downward;
       case FitnessStatus.majorSurgery: return Icons.sick;
       case FitnessStatus.fitToPick: return Icons.check_circle;
     }
   }
-
   Color get color {
     switch (this) {
       case FitnessStatus.inForm: return AccaColors.gold;
@@ -41,7 +37,6 @@ extension FitnessStatusInfo on FitnessStatus {
     }
   }
 }
-
 FitnessStatus classifyFitness(int currentStreak) {
   if (currentStreak >= 4) return FitnessStatus.inForm;
   if (currentStreak >= 2) return FitnessStatus.fullyFit;
@@ -49,7 +44,6 @@ FitnessStatus classifyFitness(int currentStreak) {
   if (currentStreak <= -2) return FitnessStatus.minorKnock;
   return FitnessStatus.fitToPick;
 }
-
 class PhysioScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
@@ -58,7 +52,6 @@ class PhysioScreen extends StatefulWidget {
   @override
   State<PhysioScreen> createState() => _PhysioScreenState();
 }
-
 class _PhysioScreenState extends State<PhysioScreen> {
   List<LeagueTableEntry> entries = [];
   GameWeek? activeGameWeek;
@@ -69,13 +62,11 @@ class _PhysioScreenState extends State<PhysioScreen> {
   bool isBooking = false;
   String? errorMessage;
   int maxPhysioSessions = 2;
-
   @override
   void initState() {
     super.initState();
     load();
   }
-
   @override
   void didUpdateWidget(covariant PhysioScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -83,7 +74,6 @@ class _PhysioScreenState extends State<PhysioScreen> {
       load();
     }
   }
-
   Future<void> load() async {
     setState(() {
       isLoading = true;
@@ -134,7 +124,6 @@ class _PhysioScreenState extends State<PhysioScreen> {
       });
     }
   }
-
   Future<void> bookSession() async {
     if (currentMember?.id == null || activeGameWeek?.id == null) return;
     setState(() {
@@ -162,7 +151,6 @@ class _PhysioScreenState extends State<PhysioScreen> {
       if (mounted) setState(() => isBooking = false);
     }
   }
-
   @override
   Widget build(BuildContext context) {
     final sessionsRemaining = maxPhysioSessions - sessionsUsed;
@@ -170,7 +158,6 @@ class _PhysioScreenState extends State<PhysioScreen> {
         activeGameWeek?.id != null &&
         !(activeGameWeek?.isLocked ?? true) &&
         sessionsRemaining > 0;
-
     return Scaffold(
       appBar: AppBar(
         title: RichText(
@@ -194,7 +181,13 @@ class _PhysioScreenState extends State<PhysioScreen> {
                 ? null
                 : () async {
                     await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
+                      MaterialPageRoute(
+                        builder: (_) => NotificationsScreen(
+                          teamId: widget.teamId,
+                          memberId: currentMember!.id!,
+                          appState: widget.appState,
+                        ),
+                      ),
                     );
                     load();
                   },
@@ -267,7 +260,6 @@ class _PhysioScreenState extends State<PhysioScreen> {
             ),
     );
   }
-
   Widget _fitnessRow(LeagueTableEntry e) {
     final status = classifyFitness(e.currentStreak);
     return Padding(

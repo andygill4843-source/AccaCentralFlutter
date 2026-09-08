@@ -22,7 +22,7 @@ class SplashScreen extends StatelessWidget {
               child: Text(
                 'Tap to continue',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13),
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13),
               ),
             ),
           ],

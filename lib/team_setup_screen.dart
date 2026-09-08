@@ -3,31 +3,47 @@ import 'app_state.dart';
 import 'firestore_service.dart';
 import 'main.dart'; // for AccaColors
 import 'models.dart';
-
 enum TeamSetupMode { join, create }
-
 class TeamSetupScreen extends StatefulWidget {
   final AppState appState;
   final VoidCallback onTeamReady;
-
-  const TeamSetupScreen({super.key, required this.appState, required this.onTeamReady});
-
+  /// Pre-filled invite code from a deep link — when set the screen opens
+  /// directly in Join mode with the code already entered.
+  final String? initialInviteCode;
+  const TeamSetupScreen({
+    super.key,
+    required this.appState,
+    required this.onTeamReady,
+    this.initialInviteCode,
+  });
   @override
   State<TeamSetupScreen> createState() => _TeamSetupScreenState();
 }
-
 class _TeamSetupScreenState extends State<TeamSetupScreen> {
   TeamSetupMode mode = TeamSetupMode.join;
-
   final teamNameController = TextEditingController();
   final seasonController = TextEditingController(text: '2026-27');
   final inviteCodeController = TextEditingController();
-
+  final tournamentNameController = TextEditingController();
   bool isLoading = false;
   String? errorMessage;
-
   int maxChallenges = 2;
   int maxPhysioSessions = 2;
+  bool setupTournament = false;
+  DateTime? tournamentDrawDateTime;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialInviteCode != null) {
+      mode = TeamSetupMode.join;
+      inviteCodeController.text = widget.initialInviteCode!;
+      // Clear the stored code so it isn't re-applied on the next rebuild.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        widget.appState.consumeInviteCode();
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +55,7 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
       ),
       backgroundColor: AccaColors.background,
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -50,6 +66,14 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: AccaColors.primary),
               ),
+              if (widget.initialInviteCode != null) ...[
+                const SizedBox(height: 8),
+                const Text(
+                  'Invite link detected — your team code has been filled in below.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: AccaColors.gold),
+                ),
+              ],
               const SizedBox(height: 24),
               SegmentedButton<TeamSetupMode>(
                 segments: const [
@@ -72,6 +96,8 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
                 _numberDropdown('Physio sessions per member this season', Icons.medical_services, maxPhysioSessions, (v) {
                   if (v != null) setState(() => maxPhysioSessions = v);
                 }),
+                const SizedBox(height: 14),
+                _tournamentSection(),
               ] else
                 _field('Invite code', inviteCodeController, capitalize: true),
               if (errorMessage != null) ...[
@@ -96,7 +122,79 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
       ),
     );
   }
-
+  Widget _tournamentSection() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Set up a knockout tournament this season?', style: TextStyle(color: Colors.black, fontSize: 14)),
+            value: setupTournament,
+            activeThumbColor: AccaColors.gold,
+            onChanged: (v) => setState(() => setupTournament = v),
+          ),
+          if (setupTournament) ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: tournamentNameController,
+              textCapitalization: TextCapitalization.words,
+              style: const TextStyle(color: Colors.black),
+              decoration: InputDecoration(
+                labelText: 'Tournament name',
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.all(12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: Colors.black26),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              tileColor: AccaColors.background,
+              title: Text(
+                tournamentDrawDateTime == null ? 'Set draw date & time' : 'Draw: ${_formatDateTime(tournamentDrawDateTime!)}',
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+              ),
+              trailing: const Icon(Icons.calendar_today, color: AccaColors.gold, size: 18),
+              onTap: pickTournamentDrawDateTime,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+  String _formatDateTime(DateTime dt) {
+    return '${dt.day}/${dt.month}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  }
+  Future<void> pickTournamentDrawDateTime() async {
+    final initial = tournamentDrawDateTime ?? DateTime.now().add(const Duration(days: 7));
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+      initialEntryMode: TimePickerEntryMode.input,
+    );
+    if (time == null) return;
+    setState(() {
+      tournamentDrawDateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    });
+  }
   Widget _numberDropdown(String label, IconData icon, int value, ValueChanged<int?> onChanged) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -123,7 +221,6 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
       ],
     );
   }
-
   Widget _field(String label, TextEditingController controller, {bool capitalize = false}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -133,6 +230,7 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
         TextField(
           controller: controller,
           textCapitalization: capitalize ? TextCapitalization.characters : TextCapitalization.words,
+          style: const TextStyle(color: Colors.black),
           decoration: InputDecoration(
             filled: true,
             fillColor: Colors.white,
@@ -146,16 +244,19 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
       ],
     );
   }
-
   Future<void> submit() async {
     final userId = widget.appState.currentUser?.id;
     if (userId == null) return;
-
+    if (mode == TeamSetupMode.create && setupTournament) {
+      if (tournamentNameController.text.trim().isEmpty || tournamentDrawDateTime == null) {
+        setState(() => errorMessage = 'Enter a tournament name and set a draw date/time, or turn the tournament off.');
+        return;
+      }
+    }
     setState(() {
       errorMessage = null;
       isLoading = true;
     });
-
     try {
       final team = mode == TeamSetupMode.create
           ? await FirestoreService.instance.createTeam(
@@ -167,16 +268,6 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
               inviteCode: inviteCodeController.text.trim().toUpperCase(),
               userId: userId,
             );
-      if (mode == TeamSetupMode.create && team.id != null) {
-        await FirestoreService.instance.createSeasonSettings(SeasonSettings(
-          teamId: team.id!,
-          season: team.season,
-          maxChallengesPerMember: maxChallenges,
-          maxPhysioSessionsPerMember: maxPhysioSessions,
-          createdAt: DateTime.now(),
-        ));
-      }
-
       final member = Member(
         id: null,
         userId: userId,
@@ -186,10 +277,26 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
         role: mode == TeamSetupMode.create ? MemberRole.manager : MemberRole.squadMember,
       );
       await FirestoreService.instance.addMember(member);
-
+      if (mode == TeamSetupMode.create && team.id != null) {
+        await FirestoreService.instance.createSeasonSettings(SeasonSettings(
+          teamId: team.id!,
+          season: team.season,
+          maxChallengesPerMember: maxChallenges,
+          maxPhysioSessionsPerMember: maxPhysioSessions,
+          createdAt: DateTime.now(),
+        ));
+        if (setupTournament && tournamentDrawDateTime != null) {
+          await FirestoreService.instance.createTournament(Tournament(
+            teamId: team.id!,
+            season: team.season,
+            name: tournamentNameController.text.trim(),
+            drawDateTime: tournamentDrawDateTime!,
+            createdAt: DateTime.now(),
+          ));
+        }
+      }
       final updatedTeamIds = [...widget.appState.currentUser!.teamIds, team.id ?? ''];
       await FirestoreService.instance.updateUserTeamIds(userId: userId, teamIds: updatedTeamIds);
-
       final updatedUser = AppUser(
         id: widget.appState.currentUser!.id,
         username: widget.appState.currentUser!.username,
@@ -199,7 +306,6 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
         fcmToken: widget.appState.currentUser!.fcmToken,
         createdAt: widget.appState.currentUser!.createdAt,
       );
-
       widget.appState.didJoinOrCreateTeam(updatedUser);
       widget.onTeamReady();
     } catch (e) {

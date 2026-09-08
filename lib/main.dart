@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:app_links/app_links.dart';
 import 'firebase_options.dart';
 import 'app_state.dart';
 import 'auth_screen.dart';
@@ -7,7 +9,6 @@ import 'team_setup_screen.dart';
 import 'main_tab_scaffold.dart';
 import 'splash_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
-
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,7 +34,7 @@ class AccaColors {
 InputDecoration accaFieldDecoration(String label) {
   return InputDecoration(
     labelText: label,
-    floatingLabelBehavior: FloatingLabelBehavior.always, // keeps the label pinned above the field, never overlapping
+    floatingLabelBehavior: FloatingLabelBehavior.always,
     labelStyle: const TextStyle(color: Colors.black87, fontSize: 13),
     filled: true,
     fillColor: Colors.white,
@@ -51,10 +52,8 @@ InputDecoration accaFieldDecoration(String label) {
 
 const accaFieldTextStyle = TextStyle(color: Colors.black, fontSize: 15);
 
-
 class AccaCentralApp extends StatelessWidget {
   const AccaCentralApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -81,7 +80,11 @@ class AccaCentralApp extends StatelessWidget {
           backgroundColor: Colors.transparent,
           elevation: 0,
           foregroundColor: Colors.white,
-          titleTextStyle: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white),
+          titleTextStyle: GoogleFonts.poppins(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+            color: Colors.white,
+          ),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
@@ -96,18 +99,36 @@ class AccaCentralApp extends StatelessWidget {
 
 class RootScreen extends StatefulWidget {
   const RootScreen({super.key});
-
   @override
   State<RootScreen> createState() => _RootScreenState();
 }
 
 class _RootScreenState extends State<RootScreen> {
   final appState = AppState();
+  StreamSubscription<Uri>? _linkSub;
 
   @override
   void initState() {
     super.initState();
     appState.addListener(() => setState(() {}));
+    _initDeepLinks();
+  }
+
+  @override
+  void dispose() {
+    _linkSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initDeepLinks() async {
+    final appLinks = AppLinks();
+    // Cold start — app was launched directly by tapping the link.
+    try {
+      final initial = await appLinks.getInitialLink();
+      if (initial != null) appState.handleDeepLink(initial);
+    } catch (_) {}
+    // Warm start — app was already running when the link was tapped.
+    _linkSub = appLinks.uriLinkStream.listen(appState.handleDeepLink);
   }
 
   @override
@@ -118,10 +139,34 @@ class _RootScreenState extends State<RootScreen> {
       case AppScreen.auth:
         return AuthScreen(appState: appState, onAuthenticated: () {});
       case AppScreen.teamSetup:
-  	return TeamSetupScreen(appState: appState, onTeamReady: () {});
+        // Pass any pending invite code so the screen opens pre-filled.
+        return TeamSetupScreen(
+          appState: appState,
+          onTeamReady: () {},
+          initialInviteCode: appState.pendingInviteCode,
+        );
       case AppScreen.main:
-  return MainTabScaffold(appState: appState, teamId: appState.activeTeamId ?? appState.currentUser?.teamIds.first ?? '');
+        // If a deep link arrived while the user is already signed in and
+        // has a team, push TeamSetupScreen as a modal over the main UI.
+        if (appState.pendingInviteCode != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => TeamSetupScreen(
+                  appState: appState,
+                  onTeamReady: () {},
+                  initialInviteCode: appState.pendingInviteCode,
+                ),
+              ),
+            );
+            appState.consumeInviteCode();
+          });
+        }
+        return MainTabScaffold(
+          appState: appState,
+          teamId: appState.activeTeamId ?? appState.currentUser?.teamIds.first ?? '',
+        );
     }
   }
 }
-

@@ -8,7 +8,6 @@ import 'profile_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'odds_format.dart';
 import 'notifications_screen.dart';
-
 class StatsScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
@@ -17,7 +16,6 @@ class StatsScreen extends StatefulWidget {
   @override
   State<StatsScreen> createState() => _StatsScreenState();
 }
-
 class _StatsScreenState extends State<StatsScreen> {
   // Raw data, fetched once — filtering by season happens locally, no refetch.
   List<Member> rawMembers = [];
@@ -27,26 +25,22 @@ class _StatsScreenState extends State<StatsScreen> {
   String? teamCurrentSeason;
   Member? currentMember;
   int unreadNotifications = 0;
-
   // Derived, recomputed whenever selectedSeason changes.
   List<LeagueTableEntry> entries = [];
   List<MemberStats> memberStats = [];
   List<(BetType, int)> betTypeCounts = [];
+  List<(BetType, int)> winningBetTypeCounts = [];
   List<String> allSeasons = [];
   String? selectedSeason;
   SeasonWinner? seasonChampion;
-
   bool isLoading = true;
   String? errorMessage;
-
   bool get isManager => currentMember?.role == MemberRole.manager;
-
   @override
   void initState() {
     super.initState();
     load();
   }
-
   @override
   void didUpdateWidget(covariant StatsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -54,7 +48,6 @@ class _StatsScreenState extends State<StatsScreen> {
       load();
     }
   }
-
     Future<void> load() async {
     setState(() {
       isLoading = true;
@@ -91,26 +84,23 @@ class _StatsScreenState extends State<StatsScreen> {
       });
     }
   }
-
   void recompute() {
     final seasonsFromGameWeeks = rawGameWeeks.map((g) => g.season).toSet();
     final seasonsFromWinners = rawSeasonWinners.map((w) => w.season).toSet();
     final combined = <String>{
       ...seasonsFromGameWeeks,
       ...seasonsFromWinners,
-      if (teamCurrentSeason != null) teamCurrentSeason!,
+      ?teamCurrentSeason,
     }..removeWhere((s) => s.isEmpty);
     allSeasons = combined.toList()..sort((a, b) => b.compareTo(a)); // most recent first
-
     final season = selectedSeason;
     final seasonGameWeekIds = rawGameWeeks.where((g) => g.season == season).map((g) => g.id).toSet();
     final seasonLegs = rawLegs.where((l) => seasonGameWeekIds.contains(l.gameWeekId)).toList();
     final seasonGameWeeks = rawGameWeeks.where((g) => g.season == season).toList();
-
     entries = ScoringEngine.buildLeagueTable(members: rawMembers, legs: seasonLegs);
     memberStats = MemberStatsEngine.buildMemberStats(members: rawMembers, legs: seasonLegs, gameWeeks: seasonGameWeeks);
     betTypeCounts = ScoringEngine.betTypePopularity(seasonLegs);
-
+    winningBetTypeCounts = ScoringEngine.betTypePopularity(seasonLegs.where((l) => l.outcome == LegOutcome.won).toList());
     if (season == teamCurrentSeason) {
       seasonChampion = null; // shown as "To be confirmed"
     } else {
@@ -118,7 +108,6 @@ class _StatsScreenState extends State<StatsScreen> {
       seasonChampion = match.isNotEmpty ? match.first : null; // null here means genuinely not recorded
     }
   }
-
   void onSeasonChanged(String? newSeason) {
     if (newSeason == null) return;
     setState(() {
@@ -126,59 +115,51 @@ class _StatsScreenState extends State<StatsScreen> {
       recompute();
     });
   }
-
   List<LeagueTableEntry> get currentStreakLeaders =>
       entries.where((e) => e.currentStreak > 0).toList()..sort((a, b) => b.currentStreak.compareTo(a.currentStreak));
-
+  List<LeagueTableEntry> get currentLosingStreakLeaders =>
+      entries.where((e) => e.currentStreak < 0).toList()..sort((a, b) => a.currentStreak.compareTo(b.currentStreak));
   List<LeagueTableEntry> get longestStreakLeaders {
     final list = entries.where((e) => e.longestWinStreak > 0).toList()
       ..sort((a, b) => b.longestWinStreak.compareTo(a.longestWinStreak));
     return list.take(5).toList();
   }
-
   List<LeagueTableEntry> get biggestWins {
     final list = entries.where((e) => e.biggestWin != null).toList()
       ..sort((a, b) => b.biggestWin!.decimalOddsAtSelection.compareTo(a.biggestWin!.decimalOddsAtSelection));
     return list.take(5).toList();
   }
-
   List<MemberStats> get lowestOddsWins {
     final list = memberStats.where((m) => m.lowestOddsWin != null).toList()
       ..sort((a, b) => a.lowestOddsWin!.decimalOddsAtSelection.compareTo(b.lowestOddsWin!.decimalOddsAtSelection));
     return list.take(5).toList();
   }
-
   List<MemberStats> get biggestLosingOdds {
     final list = memberStats.where((m) => m.biggestLosingOdds != null).toList()
       ..sort((a, b) => b.biggestLosingOdds!.decimalOddsAtSelection.compareTo(a.biggestLosingOdds!.decimalOddsAtSelection));
     return list.take(5).toList();
   }
-
   List<MemberStats> get valueHunters {
     final list = memberStats.where((m) => m.valueHunterCount > 0).toList()
       ..sort((a, b) => b.valueHunterCount.compareTo(a.valueHunterCount));
     return list.take(5).toList();
   }
-
   List<MemberStats> get fastestPickers {
     final list = memberStats.where((m) => m.avgPickTimeMinutes != null).toList()
       ..sort((a, b) => a.avgPickTimeMinutes!.compareTo(b.avgPickTimeMinutes!));
     return list.take(3).toList();
   }
-
   List<MemberStats> get slowestPickers {
     final list = memberStats.where((m) => m.avgPickTimeMinutes != null).toList()
       ..sort((a, b) => b.avgPickTimeMinutes!.compareTo(a.avgPickTimeMinutes!));
     return list.take(3).toList();
   }
-
   String _formatMinutes(double minutes) {
     if (minutes < 60) return '${minutes.round()} min';
     final hours = minutes / 60;
     if (hours < 24) return '${hours.toStringAsFixed(1)} hr';
     return '${(hours / 24).toStringAsFixed(1)} days';
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -204,7 +185,7 @@ class _StatsScreenState extends State<StatsScreen> {
                 ? null
                 : () async {
                     await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
+                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!, appState: widget.appState)),
                     );
                     load();
                   },
@@ -249,7 +230,6 @@ class _StatsScreenState extends State<StatsScreen> {
                         ),
                       ],
                       const SizedBox(height: 16),
-
                       _sectionHeader('Season champion'),
                       Card(
                         child: Padding(
@@ -276,14 +256,18 @@ class _StatsScreenState extends State<StatsScreen> {
                         ),
                       ),
                       const SizedBox(height: 20),
-
-                      _sectionHeader('Current streaks'),
+                      _sectionHeader('Current winning streaks'),
                       if (currentStreakLeaders.isEmpty)
-                        _emptyNote('No active streaks yet.')
+                        _emptyNote('No active winning streaks.')
                       else
                         for (final e in currentStreakLeaders) _streakRow(e),
                       const SizedBox(height: 20),
-
+                      _sectionHeader('Current losing streaks'),
+                      if (currentLosingStreakLeaders.isEmpty)
+                        _emptyNote('No active losing streaks.')
+                      else
+                        for (final e in currentLosingStreakLeaders) _losingStreakRow(e),
+                      const SizedBox(height: 20),
                       _sectionHeader('Longest win streaks'),
                       if (longestStreakLeaders.isEmpty)
                         _emptyNote("Nobody's won a leg yet.")
@@ -294,28 +278,24 @@ class _StatsScreenState extends State<StatsScreen> {
                             trailing: Text('${e.longestWinStreak}', style: TextStyle(color: AccaColors.textSecondary)),
                           ),
                       const SizedBox(height: 20),
-
                       _sectionHeader('Biggest odds win'),
                       if (biggestWins.isEmpty)
                         _emptyNote('No winning legs yet.')
                       else
                         for (final e in biggestWins) _oddsCard(e.displayName, e.biggestWin!, AccaColors.gold),
                       const SizedBox(height: 20),
-
                       _sectionHeader('Lowest odds win'),
                       if (lowestOddsWins.isEmpty)
                         _emptyNote('No winning legs yet.')
                       else
                         for (final m in lowestOddsWins) _oddsCard(m.displayName, m.lowestOddsWin!, AccaColors.win),
                       const SizedBox(height: 20),
-
                       _sectionHeader('Biggest losing odds'),
                       if (biggestLosingOdds.isEmpty)
                         _emptyNote('No losing legs yet.')
                       else
                         for (final m in biggestLosingOdds) _oddsCard(m.displayName, m.biggestLosingOdds!, AccaColors.loss),
                       const SizedBox(height: 20),
-
                       _sectionHeader('Average winning / losing odds'),
                       if (memberStats.where((m) => m.averageWinningOdds != null || m.averageLosingOdds != null).isEmpty)
                         _emptyNote('No settled legs yet.')
@@ -323,7 +303,6 @@ class _StatsScreenState extends State<StatsScreen> {
                         for (final m in memberStats)
                           if (m.averageWinningOdds != null || m.averageLosingOdds != null) _averageOddsRow(m),
                       const SizedBox(height: 20),
-
                       _sectionHeader('Value hunter (3/1+ picks)'),
                       if (valueHunters.isEmpty)
                         _emptyNote('Nobody has picked a 3/1+ leg yet.')
@@ -334,7 +313,6 @@ class _StatsScreenState extends State<StatsScreen> {
                             trailing: Text('${m.valueHunterCount}', style: TextStyle(color: AccaColors.textSecondary)),
                           ),
                       const SizedBox(height: 20),
-
                       _sectionHeader('Fastest picker'),
                       if (fastestPickers.isEmpty)
                         _emptyNote('Not enough data yet.')
@@ -345,7 +323,6 @@ class _StatsScreenState extends State<StatsScreen> {
                             trailing: Text(_formatMinutes(m.avgPickTimeMinutes!), style: TextStyle(color: AccaColors.textSecondary)),
                           ),
                       const SizedBox(height: 20),
-
                       _sectionHeader('Slowest picker'),
                       if (slowestPickers.isEmpty)
                         _emptyNote('Not enough data yet.')
@@ -356,33 +333,38 @@ class _StatsScreenState extends State<StatsScreen> {
                             trailing: Text(_formatMinutes(m.avgPickTimeMinutes!), style: TextStyle(color: AccaColors.textSecondary)),
                           ),
                       const SizedBox(height: 20),
-
                       _sectionHeader('Most popular bet types'),
                       if (betTypeCounts.isEmpty)
                         _emptyNote('No legs submitted yet.')
                       else
-                        for (final item in betTypeCounts) _popularityRow(item),
+                        for (final item in betTypeCounts) _popularityRow(item, betTypeCounts),
+                      const SizedBox(height: 20),
+                      _sectionHeader('Most winning bet types'),
+                      if (winningBetTypeCounts.isEmpty)
+                        _emptyNote('No winning legs yet.')
+                      else
+                        for (final item in winningBetTypeCounts) _popularityRow(item, winningBetTypeCounts),
                     ],
                   ),
                 ),
     );
   }
-
   Widget _sectionHeader(String title) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
       );
-
   Widget _emptyNote(String text) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Text(text, style: TextStyle(fontSize: 13, color: AccaColors.textSecondary)),
       );
-
   Widget _streakRow(LeagueTableEntry e) => ListTile(
         title: Text(e.displayName),
         trailing: Text('${e.currentStreak} 🔥', style: const TextStyle(color: Colors.green)),
       );
-
+  Widget _losingStreakRow(LeagueTableEntry e) => ListTile(
+        title: Text(e.displayName),
+        trailing: Text('${e.currentStreak.abs()} 🥶', style: TextStyle(color: AccaColors.loss)),
+      );
   Widget _oddsCard(String name, AccumulatorLeg leg, Color accent) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -404,7 +386,6 @@ class _StatsScreenState extends State<StatsScreen> {
       ),
     );
   }
-
   Widget _averageOddsRow(MemberStats m) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -425,9 +406,8 @@ class _StatsScreenState extends State<StatsScreen> {
       ),
     );
   }
-
-  Widget _popularityRow((BetType, int) item) {
-    final maxCount = betTypeCounts.isNotEmpty ? betTypeCounts.first.$2 : 1;
+  Widget _popularityRow((BetType, int) item, List<(BetType, int)> sourceList) {
+    final maxCount = sourceList.isNotEmpty ? sourceList.first.$2 : 1;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(

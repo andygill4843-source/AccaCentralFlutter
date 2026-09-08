@@ -20,7 +20,27 @@ class MainTabScaffold extends StatefulWidget {
 
 class _MainTabScaffoldState extends State<MainTabScaffold> {
   int currentIndex = 0;
-    final Map<int, int> refreshTokens = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
+  final Map<int, int> refreshTokens = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
+
+  @override
+  void initState() {
+    super.initState();
+    // Listen for tab-switch requests from notifications.
+    widget.appState.addListener(_onAppStateChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.appState.removeListener(_onAppStateChanged);
+    super.dispose();
+  }
+
+  void _onAppStateChanged() {
+    final pending = widget.appState.consumePendingTabNavigation();
+    if (pending != null && mounted) {
+      setState(() => currentIndex = pending.clamp(0, 5));
+    }
+  }
 
   void _select(int i) {
     setState(() {

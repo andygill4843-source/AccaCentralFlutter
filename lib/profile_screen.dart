@@ -6,29 +6,25 @@ import 'manage_team_screen.dart';
 import 'team_setup_screen.dart';
 import 'main.dart'; // for AccaColors
 import 'package:url_launcher/url_launcher.dart';
-
+import 'season_summary_screen.dart';
 class ProfileScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
-
   const ProfileScreen({super.key, required this.appState, required this.teamId});
-
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
-
 class _ProfileScreenState extends State<ProfileScreen> {
   List<Team> myTeams = [];
   Member? member;
+  List<SeasonSummary> seasonSummaries = [];
   bool isLoading = true;
   String? errorMessage;
-
   @override
   void initState() {
     super.initState();
     load();
   }
-
   Future<void> load() async {
     setState(() => isLoading = true);
     final teamIds = widget.appState.currentUser?.teamIds ?? [];
@@ -48,14 +44,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
         isLoading = false;
       });
     }
+    // Load season summaries for this team if we have a member.
+    if (loadedMember?.id != null && widget.appState.activeTeamId != null) {
+      final summaries = await FirestoreService.instance.fetchSeasonSummariesForMember(
+        teamId: widget.appState.activeTeamId!,
+        memberId: loadedMember!.id!,
+      );
+      if (mounted) setState(() => seasonSummaries = summaries);
+    }
   }
-
   Future<void> onTeamChanged(String? teamId) async {
     if (teamId == null) return;
     widget.appState.switchActiveTeam(teamId);
     await load();
   }
-
   Future<void> createNewTeam() async {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => TeamSetupScreen(appState: widget.appState, onTeamReady: () {})),
@@ -68,14 +70,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
     load();
   }
-
   
-
   @override
   Widget build(BuildContext context) {
     final user = widget.appState.currentUser;
     final activeTeamId = widget.appState.activeTeamId;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile'),
@@ -94,14 +93,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   _row('Username', user?.username ?? '—'),
                   _row('Email', user?.email ?? '—'),
                   const Divider(height: 32),
-
                   Text('Team', style: TextStyle(fontSize: 13, color: AccaColors.textSecondary)),
                   const SizedBox(height: 4),
                   if (myTeams.isEmpty)
                     const Text('No teams yet.')
                   else
                     DropdownButtonFormField<String>(
-                      value: activeTeamId,
+                      initialValue: activeTeamId,
                       decoration: InputDecoration(
                         filled: true,
                         fillColor: Colors.white,
@@ -121,31 +119,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   const SizedBox(height: 8),
                   _row('Role', member?.role == MemberRole.manager ? 'Manager' : 'Squad member'),
-
                   const SizedBox(height: 24),
                   OutlinedButton.icon(
                     onPressed: createNewTeam,
                     icon: const Icon(Icons.add_circle_outline),
                     label: const Text('Create/Join New Team'),
                   ),
-
-
                   const SizedBox(height: 32),
                   OutlinedButton.icon(
                     onPressed: myTeams.isEmpty
                         ? null
                         : () async {
+                            // Capture before the await so context isn't used
+                            // across an async gap.
+                            final messenger = ScaffoldMessenger.of(context);
                             final team = myTeams.firstWhere(
                               (t) => t.id == activeTeamId,
                               orElse: () => myTeams.first,
                             );
-                            final text = 'Join my team "${team.name}" on Acca Central — use invite code: ${team.inviteCode}';
+                            final code = team.inviteCode;
+                            final deepLink = 'accacentral://join?code=$code';
+                            final text = 'Join my Acca Central team!\n$deepLink\nTeam joining code - $code';
                             final uri = Uri.parse('https://wa.me/?text=${Uri.encodeComponent(text)}');
                             try {
                               await launchUrl(uri, mode: LaunchMode.externalApplication);
                             } catch (_) {
                               if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
+                                messenger.showSnackBar(
                                   const SnackBar(content: Text("Couldn't open WhatsApp — is it installed?")),
                                 );
                               }
@@ -170,18 +170,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ],
                   OutlinedButton.icon(
                     onPressed: () async {
+                      // Capture before the await so context isn't used
+                      // across an async gap.
+                      final navigator = Navigator.of(context);
                       await widget.appState.logOut();
                       if (mounted) {
-                        Navigator.of(context).popUntil((route) => route.isFirst);
+                        navigator.popUntil((route) => route.isFirst);
                       }
                     },
                     icon: const Icon(Icons.logout),
                     label: const Text('Log out'),
                   ),
+                  if (seasonSummaries.isNotEmpty) ...[
+                    const Divider(height: 32),
+                    const Text('Season Summaries', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    const SizedBox(height: 8),
+                    for (final summary in seasonSummaries)
+                      Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                          title: Text(summary.season, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text('${_positionLabel(summary.leaguePosition)} of ${summary.totalMembers} — ${summary.totalBasePoints} pts'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => SeasonSummaryScreen(summary: summary)),
+                          ),
+                        ),
+                      ),
+                  ],
                 ],
               ),
             ),
     );
+  }
+  String _positionLabel(int pos) {
+    if (pos == 1) return '1st';
+    if (pos == 2) return '2nd';
+    if (pos == 3) return '3rd';
+    return '${pos}th';
   }
 
   Widget _row(String label, String value) {

@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'app_state.dart';
 import 'firestore_service.dart';
@@ -15,6 +16,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'challenges_screen.dart';
 import 'notifications_screen.dart';
 import 'selection_history_screen.dart';
+import 'tournament_leg_selection_screen.dart';
+import 'tournament_screen.dart';
 
 class AccaHubScreen extends StatefulWidget {
   final AppState appState;
@@ -47,23 +50,42 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     }
   }
 
+  /// Firestore surfaces a manager-only rules rejection as a
+  /// FirebaseException with code 'permission-denied' — swap that raw error
+  /// for something a non-manager will actually understand. Anything else
+  /// (network issues, etc.) falls back to the original message.
+  String _friendlyError(Object error, String fallback) {
+    if (error is FirebaseException && error.code == 'permission-denied') {
+      return 'Only manager profiles can update gameweeks.';
+    }
+    return fallback;
+  }
+
   Future<void> load() async {
     setState(() => isLoading = true);
-    final userId = widget.appState.currentUser?.id;
-    if (userId != null) {
-      currentMember = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
-    }
-    unreadNotifications = currentMember?.id != null
-        ? await FirestoreService.instance.fetchUnreadNotificationCount(teamId: widget.teamId, memberId: currentMember!.id!)
-        : 0;
-    activeGameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
-    final members = await FirestoreService.instance.fetchMembers(widget.teamId);
-    memberCount = members.length;
-    if (activeGameWeek?.id != null) {
-      final legs = await FirestoreService.instance.fetchLegs(widget.teamId);
-      legCount = legs.where((l) => l.gameWeekId == activeGameWeek!.id).length;
-    } else {
-      legCount = 0;
+    try {
+      final userId = widget.appState.currentUser?.id;
+      if (userId != null) {
+        currentMember = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
+      }
+      unreadNotifications = currentMember?.id != null
+          ? await FirestoreService.instance.fetchUnreadNotificationCount(teamId: widget.teamId, memberId: currentMember!.id!)
+          : 0;
+      activeGameWeek = await FirestoreService.instance.fetchActiveGameWeek(widget.teamId);
+      final members = await FirestoreService.instance.fetchMembers(widget.teamId);
+      memberCount = members.length;
+      if (activeGameWeek?.id != null) {
+        final legs = await FirestoreService.instance.fetchLegs(widget.teamId);
+        legCount = legs.where((l) => l.gameWeekId == activeGameWeek!.id && !l.isSecondaryTournamentLeg).length;
+      } else {
+        legCount = 0;
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading hub: ${e.toString()}'), duration: const Duration(seconds: 10)),
+        );
+      }
     }
     if (mounted) setState(() => isLoading = false);
   }
@@ -82,6 +104,107 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     if (userId == null) return;
     final member = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
     if (member == null || member.id == null || !mounted) return;
+
+    // If this gameweek is a tournament round and the member is still
+    // active (unresolved, not a bye) in it, they need a primary AND a
+    // secondary pick rather than the usual single leg — everyone else
+    // (not in the tournament, already eliminated, or had a bye) just gets
+    // the normal single-leg flow below, unchanged.
+    // Wrapped defensively: if this check itself fails (e.g. a permissions
+    // issue), fall through to the normal single-leg flow rather than
+    // silently doing nothing, and actually show what went wrong.
+    TournamentMatch? activeMatch;
+    try {
+      activeMatch = await FirestoreService.instance.fetchActiveTournamentMatchForGameWeek(
+        teamId: widget.teamId,
+        gameWeekId: gameWeek.id!,
+        memberId: member.id!,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't check tournament status, showing your normal pick instead: $e")),
+        );
+      }
+      activeMatch = null;
+    }
+    if (!mounted) return;
+    if (activeMatch != null && activeMatch.id != null) {
+      final matchId = activeMatch.id!;
+      final legs = await FirestoreService.instance.fetchMemberLegsForGameWeek(
+        teamId: widget.teamId,
+        memberId: member.id!,
+        gameWeekId: gameWeek.id!,
+      );
+      final hasPrimary = legs.any((l) => l.tournamentMatchId == matchId && !l.isSecondaryTournamentLeg);
+      final hasSecondary = legs.any((l) => l.tournamentMatchId == matchId && l.isSecondaryTournamentLeg);
+      if (!mounted) return;
+      if (!hasPrimary) {
+        // Neither pick made yet — primary first, then immediately prompt
+        // for the secondary, then land on the summary screen.
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SubmitLegScreen(
+              gameWeekId: gameWeek.id!,
+              memberId: member.id!,
+              teamId: widget.teamId,
+              windowStart: gameWeek.startDate,
+              windowEnd: gameWeek.endDate,
+              tournamentMatchId: matchId,
+              isSecondaryTournamentLeg: false,
+            ),
+          ),
+        );
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SubmitLegScreen(
+              gameWeekId: gameWeek.id!,
+              memberId: member.id!,
+              teamId: widget.teamId,
+              windowStart: gameWeek.startDate,
+              windowEnd: gameWeek.endDate,
+              tournamentMatchId: matchId,
+              isSecondaryTournamentLeg: true,
+            ),
+          ),
+        );
+      } else if (!hasSecondary) {
+        // Primary already exists (e.g. resumed after being interrupted) —
+        // go straight to prompting for the secondary.
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SubmitLegScreen(
+              gameWeekId: gameWeek.id!,
+              memberId: member.id!,
+              teamId: widget.teamId,
+              windowStart: gameWeek.startDate,
+              windowEnd: gameWeek.endDate,
+              tournamentMatchId: matchId,
+              isSecondaryTournamentLeg: true,
+            ),
+          ),
+        );
+      }
+      if (!mounted) return;
+      // Both picks exist (or now do) — land on the summary screen, where
+      // either can be changed or swapped.
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => TournamentLegSelectionScreen(
+            teamId: widget.teamId,
+            memberId: member.id!,
+            gameWeekId: gameWeek.id!,
+            tournamentMatchId: matchId,
+            windowStart: gameWeek.startDate,
+            windowEnd: gameWeek.endDate,
+          ),
+        ),
+      );
+      load();
+      return;
+    }
+
     final existingLeg = await FirestoreService.instance.fetchMemberLegForGameWeek(
       teamId: widget.teamId,
       memberId: member.id!,
@@ -129,7 +252,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
 
   Future<void> openGameWeekManager() async {
     await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => GameWeekSetupScreen(appState: widget.appState)),
+      MaterialPageRoute(builder: (_) => GameWeekSetupScreen(appState: widget.appState, teamId: widget.teamId)),
     );
     load();
   }
@@ -148,7 +271,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
         content: Text(
           allSettled
               ? 'This ends Week ${activeGameWeek!.weekNumber}. Selections will close.'
-              : "Not every leg has settled yet, so points may not be final. This ends Week ${activeGameWeek!.weekNumber} anyway — selections will close.",
+              : 'Not all gameweek games have been settled. Please refer to the manual settlement tab. Continuing will mean not all gameweek results are correctly reflected in the output. Do you want to continue?',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
@@ -162,7 +285,8 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
       load();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error ending gameweek: ${e.toString()}')));
+        final message = _friendlyError(e, 'Error ending gameweek: ${e.toString()}');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       }
     }
   }
@@ -218,7 +342,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                 ? null
                 : () async {
                     await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
+                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!, appState: widget.appState)),
                     );
                     load();
                   },
@@ -295,6 +419,26 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                             ), 
                         ],
                       ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _hubButton(
+                              icon: Icons.emoji_events,
+                              label: 'Tournament',
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(builder: (_) => TournamentScreen(appState: widget.appState, teamId: widget.teamId)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: isManager
+                                ? _hubButton(icon: Icons.bar_chart, label: 'Odds selection', onTap: openAccumulatorSummary)
+                                : const SizedBox.shrink(),
+                          ),
+                        ],
+                      ),
                       if (isManager) ...[
                         const SizedBox(height: 12),
                         Row(
@@ -303,9 +447,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                               child: _hubButton(icon: Icons.check_circle_outline, label: 'Manual settlement', onTap: openManualSettlement),
                             ),
                             const SizedBox(width: 12),
-                            Expanded(
-                              child: _hubButton(icon: Icons.bar_chart, label: 'Odds selection', onTap: openAccumulatorSummary),
-                            ),
+                            const Expanded(child: SizedBox.shrink()),
                           ],
                         ),
                       ],

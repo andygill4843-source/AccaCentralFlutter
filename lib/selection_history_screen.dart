@@ -6,14 +6,13 @@ import 'models.dart';
 import 'main.dart'; // for AccaColors
 import 'profile_screen.dart';
 import 'notifications_screen.dart';
-
+import 'odds_format.dart';
 class _HistoryRow {
   final AccumulatorLeg leg;
   final GameWeek gameWeek;
   final String memberName;
   _HistoryRow({required this.leg, required this.gameWeek, required this.memberName});
 }
-
 extension _OutcomeLabel on LegOutcome {
   String get label {
     switch (this) {
@@ -23,7 +22,6 @@ extension _OutcomeLabel on LegOutcome {
       case LegOutcome.void_: return 'Void';
     }
   }
-
   Color get color {
     switch (this) {
       case LegOutcome.pending: return AccaColors.textSecondary;
@@ -33,16 +31,13 @@ extension _OutcomeLabel on LegOutcome {
     }
   }
 }
-
 class SelectionHistoryScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
   const SelectionHistoryScreen({super.key, required this.appState, required this.teamId});
-
   @override
   State<SelectionHistoryScreen> createState() => _SelectionHistoryScreenState();
 }
-
 class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
   List<Member> rawMembers = [];
   List<AccumulatorLeg> rawLegs = [];
@@ -50,23 +45,32 @@ class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
   String? teamCurrentSeason;
   List<String> allSeasons = [];
   String? selectedSeason;
-
+  // Resizable columns — default widths, adjustable by dragging the handle
+  // at the right edge of each header cell.
+  final Map<String, double> _columnWidths = {
+    'GW': 50,
+    'Selected': 90,
+    'Kick Off': 90,
+    'User': 90,
+    'Bet details': 220,
+    'Bet type': 110,
+    'Odds': 70,
+    'Status': 80,
+  };
+  static const double _minColumnWidth = 40;
   String? filterMemberId; // null = All
   BetType? filterBetType; // null = All
   LegOutcome? filterOutcome; // null = All
   int? filterWeekNumber; // null = All
-
   Member? currentMember;
   int unreadNotifications = 0;
   bool isLoading = true;
   String? errorMessage;
-
   @override
   void initState() {
     super.initState();
     load();
   }
-
   Future<void> load() async {
     setState(() {
       isLoading = true;
@@ -84,26 +88,22 @@ class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
       final unreadCount = currentMember?.id != null
           ? await FirestoreService.instance.fetchUnreadNotificationCount(teamId: widget.teamId, memberId: currentMember!.id!)
           : 0;
-
       rawMembers = members;
       rawLegs = legs;
       rawGameWeeks = gameWeeks;
       teamCurrentSeason = team?.season;
       selectedSeason ??= teamCurrentSeason;
-
       final seasonsFromGameWeeks = gameWeeks.map((g) => g.season).toSet();
       allSeasons = (<String>{
         ...seasonsFromGameWeeks,
-        if (teamCurrentSeason != null) teamCurrentSeason!,
+        ?teamCurrentSeason,
       }..removeWhere((s) => s.isEmpty)).toList()
         ..sort((a, b) => b.compareTo(a));
-
       // Filter selections that no longer apply once the season/data changes.
       final seasonMemberIds = _seasonRows.map((r) => r.leg.memberId).toSet();
       if (filterMemberId != null && !seasonMemberIds.contains(filterMemberId)) filterMemberId = null;
       final seasonWeekNumbers = _seasonRows.map((r) => r.gameWeek.weekNumber).toSet();
       if (filterWeekNumber != null && !seasonWeekNumbers.contains(filterWeekNumber)) filterWeekNumber = null;
-
       setState(() {
         unreadNotifications = unreadCount;
         isLoading = false;
@@ -115,7 +115,6 @@ class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
       });
     }
   }
-
   void onSeasonChanged(String? newSeason) {
     if (newSeason == null) return;
     setState(() {
@@ -126,12 +125,12 @@ class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
       filterWeekNumber = null;
     });
   }
-
   List<_HistoryRow> get _seasonRows {
     final gwById = {for (final g in rawGameWeeks) if (g.id != null) g.id!: g};
     final memberNameById = {for (final m in rawMembers) if (m.id != null) m.id!: m.displayName};
     final rows = <_HistoryRow>[];
     for (final leg in rawLegs) {
+      if (leg.isSecondaryTournamentLeg) continue; // tournament secondary picks don't belong in the main history
       final gw = gwById[leg.gameWeekId];
       if (gw == null || gw.season != selectedSeason) continue;
       rows.add(_HistoryRow(
@@ -147,7 +146,6 @@ class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
     });
     return rows;
   }
-
   List<_HistoryRow> get _filteredRows {
     return _seasonRows.where((r) {
       if (filterMemberId != null && r.leg.memberId != filterMemberId) return false;
@@ -157,12 +155,9 @@ class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
       return true;
     }).toList();
   }
-
   bool get _hasActiveFilters =>
       filterMemberId != null || filterBetType != null || filterOutcome != null || filterWeekNumber != null;
-
   String _formatDateOnly(DateTime dt) => '${dt.day}/${dt.month}/${dt.year}';
-
   @override
   Widget build(BuildContext context) {
     final rows = _filteredRows;
@@ -171,7 +166,6 @@ class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
     final betTypeOptions = seasonRows.map((r) => r.leg.betType).toSet().toList()
       ..sort((a, b) => a.displayName.compareTo(b.displayName));
     final weekOptions = seasonRows.map((r) => r.gameWeek.weekNumber).toSet().toList()..sort();
-
     return Scaffold(
       appBar: AppBar(
         title: RichText(
@@ -195,7 +189,7 @@ class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
                 ? null
                 : () async {
                     await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!)),
+                      MaterialPageRoute(builder: (_) => NotificationsScreen(teamId: widget.teamId, memberId: currentMember!.id!, appState: widget.appState)),
                     );
                     load();
                   },
@@ -307,49 +301,106 @@ class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
                           padding: EdgeInsets.symmetric(vertical: 24),
                           child: Text('No selections match these filters.', style: TextStyle(color: Colors.white70)),
                         )
-                      else
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: AccaColors.gold, width: 1.5),
-                          ),
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: DataTable(
-                              headingRowColor: WidgetStateProperty.all(AccaColors.gold),
-                              headingTextStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.black),
-                              dataTextStyle: const TextStyle(fontSize: 12, color: Colors.black),
-                              columns: const [
-                                DataColumn(label: Text('GW')),
-                                DataColumn(label: Text('Date')),
-                                DataColumn(label: Text('User')),
-                                DataColumn(label: Text('Bet details')),
-                                DataColumn(label: Text('Bet type')),
-                                DataColumn(label: Text('Status')),
-                              ],
-                              rows: [
-                                for (final r in rows)
-                                  DataRow(
-                                    cells: [
-                                      DataCell(Text('${r.gameWeek.weekNumber}')),
-                                      DataCell(Text(_formatDateOnly(r.gameWeek.startDate))),
-                                      DataCell(Text(r.memberName)),
-                                      DataCell(SizedBox(width: 220, child: Text(r.leg.selectionDescription, overflow: TextOverflow.ellipsis))),
-                                      DataCell(Text(r.leg.betType.displayName)),
-                                      DataCell(Text(r.leg.outcome.label, style: TextStyle(color: r.leg.outcome.color, fontWeight: FontWeight.bold))),
-                                    ],
-                                  ),
-                              ],
-                            ),
-                          ),
+                      else ...[
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 8),
+                          child: Text('Drag a column\'s right edge to resize it.', style: TextStyle(fontSize: 11, color: Colors.white54)),
                         ),
+                        _resizableTable(rows),
+                      ],
                     ],
                   ),
                 ),
     );
   }
-
+  void _resizeColumn(String column, double delta) {
+    setState(() {
+      final current = _columnWidths[column] ?? 90;
+      _columnWidths[column] = (current + delta).clamp(_minColumnWidth, 500);
+    });
+  }
+  Widget _resizeHandle(String column) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragUpdate: (details) => _resizeColumn(column, details.delta.dx),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.resizeColumn,
+        child: Container(
+          width: 12,
+          alignment: Alignment.center,
+          child: Container(width: 2, color: Colors.black26),
+        ),
+      ),
+    );
+  }
+  Widget _resizableHeaderCell(String label) {
+    final width = _columnWidths[label] ?? 90;
+    return Container(
+      height: 36,
+      width: width,
+      color: AccaColors.gold,
+      child: Row(
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.black), overflow: TextOverflow.ellipsis),
+            ),
+          ),
+          _resizeHandle(label),
+        ],
+      ),
+    );
+  }
+  Widget _resizableCell(String column, Widget child) {
+    final width = _columnWidths[column] ?? 90;
+    return Container(
+      height: 36,
+      width: width,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      alignment: Alignment.centerLeft,
+      child: child,
+    );
+  }
+  Widget _resizableTable(List<_HistoryRow> rows) {
+    const columns = ['GW', 'Selected', 'Kick Off', 'User', 'Bet details', 'Bet type', 'Odds', 'Status'];
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AccaColors.gold, width: 1.5),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(9),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [for (final c in columns) _resizableHeaderCell(c)]),
+              for (final r in rows)
+                Row(
+                  children: [
+                    _resizableCell('GW', Text('${r.gameWeek.weekNumber}', style: _cellTextStyle)),
+                    _resizableCell('Selected', Text(_formatDateOnly(r.leg.submittedAt), style: _cellTextStyle)),
+                    _resizableCell('Kick Off', Text(_formatDateOnly(r.leg.kickoff), style: _cellTextStyle)),
+                    _resizableCell('User', Text(r.memberName, style: _cellTextStyle, overflow: TextOverflow.ellipsis)),
+                    _resizableCell('Bet details', Text(r.leg.selectionDescription, style: _cellTextStyle, overflow: TextOverflow.ellipsis)),
+                    _resizableCell('Bet type', Text(r.leg.betType.displayName, style: _cellTextStyle, overflow: TextOverflow.ellipsis)),
+                    _resizableCell('Odds', Text(decimalToFractional(r.leg.decimalOddsAtSelection), style: _cellTextStyle)),
+                    _resizableCell(
+                      'Status',
+                      Text(r.leg.outcome.label, style: TextStyle(fontSize: 12, color: r.leg.outcome.color, fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  static const _cellTextStyle = TextStyle(fontSize: 12, color: Colors.black);
   Widget _filterDropdown<T>({
     required String label,
     required T value,

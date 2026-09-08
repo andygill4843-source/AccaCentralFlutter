@@ -3,41 +3,56 @@ import 'app_state.dart';
 import 'firestore_service.dart';
 import 'models.dart';
 import 'place_fine_screen.dart';
+import 'issue_yellow_card_screen.dart';
 import 'main.dart'; // for AccaColors
 import 'package:collection/collection.dart';
 import 'manage_fines_screen.dart';
-
 class FinesScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
-
   const FinesScreen({super.key, required this.appState, required this.teamId});
-
   @override
   State<FinesScreen> createState() => _FinesScreenState();
 }
-
 class _FinesScreenState extends State<FinesScreen> {
   List<Fine> fines = [];
   List<Member> members = [];
+  List<YellowCard> yellowCards = [];
+  String? currentSeason;
   Member? currentMember;
   bool isLoading = true;
   String? errorMessage;
-
   bool get isManager => currentMember?.role == MemberRole.manager;
-
+  // Resizable column widths for the fines tally table.
+  // Fine-type columns are built from FineType.values so we key by displayName.
+  final Map<String, double> _colWidths = {};
+  static const double _minColWidth = 40;
+  double _colWidth(String label) => _colWidths[label] ?? (label == 'Yellow Cards' ? 90 : (label == 'Total fines' || label == 'Outstanding' ? 80 : 90));
+  void _resizeFineCol(String col, double delta) {
+    setState(() => _colWidths[col] = (_colWidth(col) + delta).clamp(_minColWidth, 500));
+  }
+  Widget _fineResizeHandle(String col) => GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragUpdate: (d) => _resizeFineCol(col, d.delta.dx),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.resizeColumn,
+          child: Container(width: 12, alignment: Alignment.center, child: Container(width: 2, color: Colors.black26)),
+        ),
+      );
   @override
   void initState() {
     super.initState();
     load();
   }
-
   Future<void> load() async {
     setState(() => isLoading = true);
     try {
       final userId = widget.appState.currentUser?.id;
+      final team = await FirestoreService.instance.fetchTeam(widget.teamId);
+      final season = team?.season ?? '';
       final loadedMembers = await FirestoreService.instance.fetchMembers(widget.teamId);
       final loadedFines = await FirestoreService.instance.fetchFines(widget.teamId);
+      final loadedYellowCards = await FirestoreService.instance.fetchYellowCards(teamId: widget.teamId, season: season);
       Member? me;
       if (userId != null) {
         me = loadedMembers.where((m) => m.userId == userId).firstOrNull;
@@ -45,6 +60,8 @@ class _FinesScreenState extends State<FinesScreen> {
       setState(() {
         members = loadedMembers;
         fines = loadedFines;
+        yellowCards = loadedYellowCards;
+        currentSeason = season;
         currentMember = me;
         isLoading = false;
       });
@@ -55,12 +72,9 @@ class _FinesScreenState extends State<FinesScreen> {
       });
     }
   }
-
   List<Fine> get myPendingFines =>
       fines.where((f) => f.memberId == currentMember?.id && f.status == FineStatus.pending).toList();
-
   List<Fine> get activeDisputes => fines.where((f) => f.status == FineStatus.disputed).toList();
-
   Map<String, Map<FineType, int>> get allTimeTally {
     final Map<String, Map<FineType, int>> result = {};
     for (final member in members) {
@@ -73,7 +87,6 @@ class _FinesScreenState extends State<FinesScreen> {
     }
     return result;
   }
-
   Map<String, Map<FineType, int>> get tally {
     final Map<String, Map<FineType, int>> result = {};
     for (final member in members) {
@@ -86,7 +99,20 @@ class _FinesScreenState extends State<FinesScreen> {
     }
     return result;
   }
-
+  /// Current, resettable tally — how many unconsumed yellow cards each
+  /// member has this season. Resets to 0 the moment a pair triggers a
+  /// fine, since both contributing cards get marked consumed at that point.
+  Map<String, int> get unconsumedYellowCardCount {
+    final Map<String, int> result = {};
+    for (final member in members) {
+      if (member.id == null) continue;
+      result[member.id!] = 0;
+    }
+    for (final card in yellowCards.where((c) => c.consumedByFineId == null)) {
+      result[card.memberId] = (result[card.memberId] ?? 0) + 1;
+    }
+    return result;
+  }
   Future<void> respond(Fine fine, bool accept) async {
     if (fine.id == null) return;
     try {
@@ -98,7 +124,6 @@ class _FinesScreenState extends State<FinesScreen> {
       }
     }
   }
-
   Future<void> vote(Fine fine, bool upholds) async {
     if (fine.id == null || currentMember?.id == null) return;
     try {
@@ -110,7 +135,6 @@ class _FinesScreenState extends State<FinesScreen> {
       }
     }
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -120,6 +144,24 @@ class _FinesScreenState extends State<FinesScreen> {
         foregroundColor: Colors.white,
         actions: isManager
             ? [
+                IconButton(
+                  icon: const Icon(Icons.style_outlined),
+                  tooltip: 'Issue yellow card',
+                  onPressed: () async {
+                    final issued = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => IssueYellowCardScreen(
+                          teamId: widget.teamId,
+                          season: currentSeason ?? '',
+                          members: members,
+                          issuedByMemberId: currentMember!.id!,
+                          issuedByName: widget.appState.currentUser?.displayName ?? 'Manager',
+                        ),
+                      ),
+                    );
+                    if (issued == true) load();
+                  },
+                ),
                 IconButton(
                   icon: const Icon(Icons.check_circle_outline),
                   tooltip: 'Confirm fines paid',
@@ -182,12 +224,10 @@ class _FinesScreenState extends State<FinesScreen> {
                 ),
     );
   }
-
   Widget _sectionHeader(String title) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
       );
-
   Widget _pendingFineCard(Fine fine) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -224,14 +264,12 @@ class _FinesScreenState extends State<FinesScreen> {
       ),
     );
   }
-
   Widget _disputeCard(Fine fine) {
     final isFinedMember = currentMember?.id == fine.memberId;
     final hasVoted = currentMember?.id != null && fine.votes.containsKey(currentMember!.id);
     final upholdCount = fine.votes.values.where((v) => v == true).length;
     final overturnCount = fine.votes.values.where((v) => v == false).length;
     final daysLeft = fine.disputeDeadline != null ? fine.disputeDeadline!.difference(DateTime.now()).inDays : 0;
-
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
@@ -267,89 +305,82 @@ class _FinesScreenState extends State<FinesScreen> {
       ),
     );
   }
-
   static const _rowHeight = 32.0;
   static const _headerHeight = 32.0;
   static const _cellTextStyle = TextStyle(fontSize: 11, color: Colors.black);
   static const _headerTextStyle = TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black);
-
   Widget _tallyTable() {
     if (members.isEmpty) return const Text('No members yet.', style: TextStyle(color: Colors.white70));
-
+    final fineTypeCols = FineType.values.map((t) => t.displayName).toList();
+    const summaryCol = ['Total fines', 'Outstanding', 'Yellow Cards'];
+    Widget rHeader(String label) => Container(
+      height: _headerHeight,
+      width: _colWidth(label),
+      color: AccaColors.gold,
+      child: Row(children: [
+        Expanded(child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Text(label, style: _headerTextStyle, textAlign: TextAlign.center, overflow: TextOverflow.ellipsis),
+        )),
+        _fineResizeHandle(label),
+      ]),
+    );
+    Widget rCell(String label, String value) => Container(
+      height: _rowHeight,
+      width: _colWidth(label),
+      alignment: Alignment.center,
+      child: Text(value, style: _cellTextStyle),
+    );
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AccaColors.gold, width: 1.5),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            decoration: const BoxDecoration(border: Border(right: BorderSide(color: Colors.black26))),
-            child: Column(
-              children: [
-                Container(
-                  height: _headerHeight,
-                  width: 90,
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  color: AccaColors.gold,
-                  child: const Text('User', style: _headerTextStyle),
-                ),
-                for (final member in members)
-                  if (member.id != null)
-                    Container(
-                      height: _rowHeight,
-                      width: 90,
-                      alignment: Alignment.centerLeft,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Text(member.displayName, style: _cellTextStyle, overflow: TextOverflow.ellipsis),
-                    ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(9),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              decoration: const BoxDecoration(border: Border(right: BorderSide(color: Colors.black26))),
               child: Column(
                 children: [
-                  Row(
-                    children: [
-                      for (final type in FineType.values) _headerCell(type.displayName, 90),
-                      _headerCell('Total fines', 80),
-                      _headerCell('Outstanding', 80),
-                    ],
-                  ),
+                  Container(height: _headerHeight, width: 90, alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(horizontal: 8), color: AccaColors.gold,
+                      child: const Text('User', style: _headerTextStyle)),
                   for (final member in members)
                     if (member.id != null)
-                      Row(
-                        children: [
-                          for (final type in FineType.values) _dataCell('${allTimeTally[member.id]?[type] ?? 0}', 90),
-                          _dataCell('${FineType.values.fold<int>(0, (sum, t) => sum + (allTimeTally[member.id]?[t] ?? 0))}', 80),
-                          _dataCell('${FineType.values.fold<int>(0, (sum, t) => sum + (tally[member.id]?[t] ?? 0))}', 80),
-                        ],
-                      ),
+                      Container(height: _rowHeight, width: 90, alignment: Alignment.centerLeft,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          child: Text(member.displayName, style: _cellTextStyle, overflow: TextOverflow.ellipsis)),
                 ],
               ),
             ),
-          ),
-        ],
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Column(
+                  children: [
+                    Row(children: [
+                      for (final label in fineTypeCols) rHeader(label),
+                      for (final label in summaryCol) rHeader(label),
+                    ]),
+                    for (final member in members)
+                      if (member.id != null)
+                        Row(children: [
+                          for (final type in FineType.values) rCell(type.displayName, '${allTimeTally[member.id]?[type] ?? 0}'),
+                          rCell('Total fines', '${FineType.values.fold<int>(0, (sum, t) => sum + (allTimeTally[member.id]?[t] ?? 0))}'),
+                          rCell('Outstanding', '${FineType.values.fold<int>(0, (sum, t) => sum + (tally[member.id]?[t] ?? 0))}'),
+                          rCell('Yellow Cards', '${unconsumedYellowCardCount[member.id] ?? 0}'),
+                        ]),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
-  }
-
-  Widget _headerCell(String label, double width) {
-    return Container(
-      height: _headerHeight,
-      width: width,
-      alignment: Alignment.center,
-      color: AccaColors.gold,
-      child: Text(label, style: _headerTextStyle, textAlign: TextAlign.center),
-    );
-  }
-
-  Widget _dataCell(String value, double width) {
-    return Container(height: _rowHeight, width: width, alignment: Alignment.center, child: Text(value, style: _cellTextStyle));
   }
 }

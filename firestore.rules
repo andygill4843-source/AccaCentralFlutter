@@ -1,39 +1,30 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
     function isSignedIn() {
       return request.auth != null;
     }
-
     function isSelf(uid) {
       return isSignedIn() && request.auth.uid == uid;
     }
-
     function teamData(teamId) {
       return get(/databases/$(database)/documents/teams/$(teamId)).data;
     }
-
     function isMemberOfTeam(teamId) {
       return isSignedIn() && request.auth.uid in teamData(teamId).memberIds;
     }
-
     function isTeamManager(teamId) {
       return isSignedIn()
-       && exists(/databases/$(database)/documents/members/$(teamId + '_' + request.auth.uid))
        && get(/databases/$(database)/documents/members/$(teamId + '_' + request.auth.uid)).data.role == 'manager';
     }
-
     function ownsMemberDoc(memberId) {
       return isSignedIn()
         && get(/databases/$(database)/documents/members/$(memberId)).data.userId == request.auth.uid;
     }
-
     function isGameWeekLocked(gameWeekId) {
-       return get(/databases/$(database)/documents/gameWeeks/$(gameWeekId)).data.isLocked == true;
+      return exists(/databases/$(database)/documents/gameWeeks/$(gameWeekId))
+        && get(/databases/$(database)/documents/gameWeeks/$(gameWeekId)).data.isLocked == true;
     }
-
     match /users/{userId} {
       allow read: if isSelf(userId);
       allow create: if isSelf(userId);
@@ -41,23 +32,18 @@ service cloud.firestore {
         && request.resource.data.username == resource.data.username;
       allow delete: if false;
     }
-
     match /challenges/{challengeId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
-
       allow create: if isSignedIn()
         && ownsMemberDoc(request.resource.data.challengerMemberId)
         && isMemberOfTeam(request.resource.data.teamId)
         && request.resource.data.status == 'active';
-
       // Resolution runs client-side on load — any team member can trigger it.
       allow update: if isMemberOfTeam(resource.data.teamId)
         && resource.data.status == 'active'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'challengerWon']);
-
       allow delete: if false;
     }
-
     match /notifications/{notificationId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
       allow create: if isMemberOfTeam(request.resource.data.teamId);
@@ -65,32 +51,95 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
       allow delete: if false;
     }
-
     match /seasonWinners/{winnerId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
       allow create: if isTeamManager(request.resource.data.teamId);
       allow update, delete: if false;
     }
-
     match /seasonSettings/{settingsId} {
       allow read: if !exists(/databases/$(database)/documents/seasonSettings/$(settingsId)) || isMemberOfTeam(resource.data.teamId);
       allow create: if isTeamManager(request.resource.data.teamId);
       allow update, delete: if false;
 }
-
+    // Yellow cards: not disputable, manager-issued only. The only update
+    // permitted is consumedByFineId, set once a pair of cards triggers an
+    // automatic fine — never touched otherwise, so a card's own reason/
+    // member/season can't be altered after creation.
+    match /yellowCards/{cardId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+      allow create: if isTeamManager(request.resource.data.teamId);
+      allow update: if isTeamManager(resource.data.teamId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['consumedByFineId']);
+      allow delete: if false;
+    }
+    // Kudos reactions — any member can add reactions to legs in their team,
+    // and can delete only their own reactions (toggle off). No updates:
+    // reactions are added/removed, never edited.
+    match /reactions/{reactionId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+      allow create: if isSignedIn()
+        && isMemberOfTeam(request.resource.data.teamId)
+        && ownsMemberDoc(request.resource.data.reactorMemberId);
+      allow delete: if isSignedIn()
+        && ownsMemberDoc(resource.data.reactorMemberId);
+      allow update: if false;
+    }
+    // Season summaries — written by the manager at season end, readable
+    // by the member themselves only (personal history, not public).
+    match /seasonSummaries/{summaryId} {
+      allow read: if isSignedIn()
+        && (isMemberOfTeam(resource.data.teamId));
+      allow create: if isTeamManager(request.resource.data.teamId);
+      allow update, delete: if false;
+    }
+    // Fixture odds cache — written by the app when odds are first fetched
+    // for a fixture, readable by any signed-in user (odds are not
+    // team-specific — same fixture, same odds for everyone).
+    match /fixtureOdds/{cacheId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if false;
+    }
+    // Live match events — written by the Cloud Function to track which
+    // events have already triggered notifications (dedup layer).
+    // Readable by team members for the live screen.
+    match /liveMatchEvents/{eventId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
+    // Knockout tournament: same manager-only-create / team-member-read
+    // pattern as seasonWinners/seasonSettings above. No update/delete rule
+    // yet — Stage 2 (draw + match results) will need to add an update rule
+    // once that write path actually exists.
+    match /tournaments/{tournamentId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+      allow create: if isTeamManager(request.resource.data.teamId);
+      allow update: if isTeamManager(resource.data.teamId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mainBracketSize', 'currentRoundSize', 'status']);
+      allow delete: if false;
+    }
+    // Individual fixtures within a tournament round. Only the 'revealed'
+    // field is updatable for now (the manager's reveal-one-by-one /
+    // reveal-all mechanism) — a proper update rule for match resolution
+    // (winnerMemberId etc.) is added once that logic actually exists.
+    match /tournamentMatches/{matchId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+      allow create: if isTeamManager(request.resource.data.teamId);
+      allow update: if isTeamManager(resource.data.teamId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revealed', 'gameWeekId', 'winnerMemberId', 'winnerName']);
+      allow delete: if false;
+    }
     match /usernames/{username} {
       allow read: if true;
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
       allow update, delete: if false;
     }
-
     match /teams/{teamId} {
       allow read: if isSignedIn();
-
       allow create: if isSignedIn()
         && request.resource.data.managerId == request.auth.uid
         && request.resource.data.memberIds == [request.auth.uid];
-
       allow update: if isSignedIn() && (
     resource.data.managerId == request.auth.uid ||
     isTeamManager(teamId) ||
@@ -99,37 +148,28 @@ service cloud.firestore {
       request.resource.data.memberIds == resource.data.memberIds.concat([request.auth.uid])
     )
   );
-
       allow delete: if isTeamManager(teamId);
     }
-
     match /members/{memberId} {
   	allow read: if isMemberOfTeam(resource.data.teamId);
-
   	allow create: if isSignedIn()
     	  && request.resource.data.userId == request.auth.uid
     	  && isMemberOfTeam(request.resource.data.teamId);
-
   	allow update: if isTeamManager(resource.data.teamId)
     	  && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
     	   	&& (request.resource.data.role == 'manager' || request.resource.data.role == 'squad_member');
-
   	allow delete: if isTeamManager(resource.data.teamId);
      }
-
     match /gameWeeks/{gameWeekId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
       allow create: if isTeamManager(request.resource.data.teamId);
       allow update: if isTeamManager(resource.data.teamId);
       allow delete: if false;
     }
-
     match /fines/{fineId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
-
       allow create: if isTeamManager(request.resource.data.teamId)
         && request.resource.data.status == 'pending';
-
       // The fined member can accept or dispute their own fine.
       allow update: if isMemberOfTeam(resource.data.teamId)
         && (
@@ -149,10 +189,8 @@ service cloud.firestore {
           (isTeamManager(resource.data.teamId)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paid', 'paidAt']))
         );
-
       allow delete: if false;
     }
-
     match /physioSessions/{sessionId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
       allow create: if isSignedIn()
@@ -161,7 +199,6 @@ service cloud.firestore {
         && !isGameWeekLocked(request.resource.data.gameWeekId);
       allow update, delete: if false;
     }
-
     match /legs/{legId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
       allow create: if isSignedIn()
@@ -177,6 +214,13 @@ service cloud.firestore {
         ownsMemberDoc(resource.data.memberId)
         && !isGameWeekLocked(resource.data.gameWeekId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['physioProtected'])
+      ) || (
+        // The leg's own owner swapping which of their two tournament legs
+        // is primary vs secondary — both legs already exist, this only
+        // flips a role flag, never re-picks anything.
+        ownsMemberDoc(resource.data.memberId)
+        && !isGameWeekLocked(resource.data.gameWeekId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isSecondaryTournamentLeg'])
       );
       allow delete: if isSignedIn()
     	&& resource.data.outcome == 'pending'

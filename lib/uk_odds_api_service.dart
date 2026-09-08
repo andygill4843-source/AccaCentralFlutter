@@ -200,6 +200,17 @@ class UkOddsApiService {
   static const String _apiKey =
       String.fromEnvironment('UK_ODDS_API_KEY');
 
+  /// Max results requested per page. The API's own cap as
+  /// observed in practice — kept as a named constant since it's
+  /// referenced both when building the request and when deciding
+  /// whether another page needs to be fetched.
+  static const int _perPage = 200;
+
+  /// Safety ceiling on how many pages we'll ever fetch for a
+  /// single date-window request, to guard against an unexpected
+  /// API response shape causing a runaway loop.
+  static const int _maxPages = 10;
+
   /// ==========================================================
   /// NORMALISE
   /// ==========================================================
@@ -223,6 +234,14 @@ class UkOddsApiService {
   /// UK Odds API.
   ///
   /// It deliberately does NOT use `contains`.
+  ///
+  /// The API has been observed returning more than one distinct
+  /// league_name string for the same competition (e.g. La Liga
+  /// appearing as both "La Liga" and "Spanish Primera Liga") —
+  /// every accepted variant for a competition is listed
+  /// explicitly here. If a fixture goes missing from a league's
+  /// list again in future, check its raw league_name against
+  /// this list first before assuming a different cause.
   /// ==========================================================
 
   static bool _isCorrectLeague(
@@ -252,7 +271,8 @@ class UkOddsApiService {
             api == 'uefa champions league';
 
       case 'la liga':
-        return api == 'la liga';
+        return api == 'la liga' ||
+            api == 'spanish primera liga';
 
       case 'serie a':
         return api == 'serie a' ||
@@ -302,6 +322,17 @@ class UkOddsApiService {
   /// while still allowing:
   ///
   /// English Championship
+  ///
+  /// PAGINATION:
+  /// The API caps each response at `_perPage` events. A date
+  /// window with more fixtures across all leagues worldwide than
+  /// that cap will silently truncate — fixtures past the cutoff
+  /// never make it into the list, regardless of league. We fetch
+  /// additional pages until a page comes back with fewer than
+  /// `_perPage` events (the standard "last page" signal for a
+  /// page-based API), rather than trusting a specific pagination
+  /// metadata field, since the API's exact pagination response
+  /// shape hasn't been confirmed.
   /// ==========================================================
 
   Future<List<UkOddsFixtureSummary>> fetchFixtures({
@@ -309,99 +340,111 @@ class UkOddsApiService {
     required DateTime to,
     String? league,
   }) async {
-    final formatter =
-        (DateTime date) =>
-            '${date.year.toString().padLeft(4, '0')}-'
-            '${date.month.toString().padLeft(2, '0')}-'
-            '${date.day.toString().padLeft(2, '0')}';
+    String formatter(DateTime date) =>
+        '${date.year.toString().padLeft(4, '0')}-'
+        '${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
 
-    final params = <String, String>{
-      'from': formatter(from),
-      'to': formatter(to),
-      'per_page': '200',
-    };
-
-    /// IMPORTANT:
-    ///
-    /// No `league` parameter here.
-    ///
-    /// We filter locally using the actual league_name returned
-    /// by the API.
-
-    final uri =
-        Uri.parse(
-      '$_baseUrl/football/events',
-    ).replace(
-      queryParameters: params,
-    );
+    final List<UkOddsFixtureSummary> allEvents = [];
 
     debugPrint(
       '========== UK ODDS API REQUEST ==========',
     );
-
     debugPrint(
-      'From: ${params['from']}',
+      'From: ${formatter(from)}',
     );
-
     debugPrint(
-      'To: ${params['to']}',
+      'To: ${formatter(to)}',
     );
-
     debugPrint(
       'League filtering: LOCAL',
     );
-
     debugPrint(
       '=========================================',
     );
 
-    final response = await http.get(
-      uri,
-      headers: {
-        'X-Api-Key': _apiKey,
-      },
-    );
+    for (var page = 1; page <= _maxPages; page++) {
+      final params = <String, String>{
+        'from': formatter(from),
+        'to': formatter(to),
+        'per_page': '$_perPage',
+        'page': '$page',
+      };
 
-    if (response.statusCode != 200) {
-      throw Exception(
-        'Failed to load fixtures: '
-        '${response.statusCode} '
-        '${response.body}',
+      /// IMPORTANT:
+      ///
+      /// No `league` parameter here.
+      ///
+      /// We filter locally using the actual league_name returned
+      /// by the API.
+
+      final uri =
+          Uri.parse(
+        '$_baseUrl/football/events',
+      ).replace(
+        queryParameters: params,
       );
-    }
 
-    final decoded =
-        jsonDecode(response.body);
-
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception(
-        'Unexpected UK Odds API response.',
+      final response = await http.get(
+        uri,
+        headers: {
+          'X-Api-Key': _apiKey,
+        },
       );
-    }
 
-    final rawEvents =
-        decoded['events'];
+      if (response.statusCode != 200) {
+        throw Exception(
+          'Failed to load fixtures: '
+          '${response.statusCode} '
+          '${response.body}',
+        );
+      }
 
-    final List<dynamic> eventList =
-        rawEvents is List
-            ? rawEvents
-            : <dynamic>[];
+      final decoded =
+          jsonDecode(response.body);
 
-    final allEvents = eventList
-        .whereType<Map>()
-        .map(
-          (event) =>
-              UkOddsFixtureSummary.fromJson(
-            Map<String, dynamic>.from(
-              event,
+      if (decoded is! Map<String, dynamic>) {
+        throw Exception(
+          'Unexpected UK Odds API response.',
+        );
+      }
+
+      final rawEvents =
+          decoded['events'];
+
+      final List<dynamic> eventList =
+          rawEvents is List
+              ? rawEvents
+              : <dynamic>[];
+
+      final pageEvents = eventList
+          .whereType<Map>()
+          .map(
+            (event) =>
+                UkOddsFixtureSummary.fromJson(
+              Map<String, dynamic>.from(
+                event,
+              ),
             ),
-          ),
-        )
-        .toList();
+          )
+          .toList();
+
+      debugPrint(
+        'UK Odds API page $page returned '
+        '${pageEvents.length} events.',
+      );
+
+      allEvents.addAll(pageEvents);
+
+      // Fewer events than requested means this was the last page.
+      if (pageEvents.length < _perPage) {
+        break;
+      }
+    }
 
     debugPrint(
       'UK Odds API returned '
-      '${allEvents.length} total events.',
+      '${allEvents.length} total events across all pages.',
     );
 
     /// ========================================================
