@@ -255,6 +255,16 @@ class AccumulatorLeg {
   final DateTime kickoff;
   final BetType betType;
   final String selectionDescription;
+  /// The odds market this pick came from, e.g. "Match Winner", "Total - Home",
+  /// "Goals Over/Under". Stored so settlement logic can determine market-
+  /// specific context (like which team a Team Totals pick applies to)
+  /// without parsing it back out of selectionDescription.
+  final String? marketName;
+  /// The raw API selection value for this pick, e.g. "Home", "Away", "Draw",
+  /// "Over 1.5", "Yes". Settlement engines match against this directly
+  /// instead of selectionDescription, which always contains both team
+  /// names and can't reliably disambiguate the actual pick.
+  final String? pickValue;
   final double decimalOddsAtSelection;
   final String bookmaker;
   final Map<String, double>? bookmakerPrices;
@@ -262,21 +272,9 @@ class AccumulatorLeg {
   final LegOutcome outcome;
   final DateTime submittedAt;
   final bool physioProtected;
-  /// Set when this leg was submitted as part of a tournament-linked
-  /// gameweek — links back to the specific TournamentMatch it counts
-  /// toward. Null for an ordinary (non-tournament) leg.
   final String? tournamentMatchId;
-  /// True for the secondary pick in a tournament round. Secondary legs
-  /// never feed the main league table or the odds-selection screen — only
-  /// the primary leg does. Always false outside a tournament context.
   final bool isSecondaryTournamentLeg;
-  /// API Football numeric fixture ID — used for live score polling and
-  /// odds fetching from both API Football and the Odds API.
-  /// Null for legs submitted before this field was added, or where the
-  /// fixture could only be matched by team name.
   final int? apiFootballFixtureId;
-  /// API Football league ID for the fixture — used to filter live polling
-  /// requests to only the leagues that have pending legs this gameweek.
   final int? apiFootballLeagueId;
   AccumulatorLeg({
     this.id,
@@ -288,6 +286,8 @@ class AccumulatorLeg {
     required this.kickoff,
     required this.betType,
     required this.selectionDescription,
+    this.marketName,
+    this.pickValue,
     required this.decimalOddsAtSelection,
     required this.bookmaker,
     this.bookmakerPrices,
@@ -316,6 +316,8 @@ class AccumulatorLeg {
       kickoff: map['kickoff'].toDate(),
       betType: BetTypeValue.fromDisplayName(map['betType']),
       selectionDescription: map['selectionDescription'],
+      marketName: map['marketName'] as String?,
+      pickValue: map['pickValue'] as String?,
       decimalOddsAtSelection: (map['decimalOddsAtSelection'] as num).toDouble(),
       bookmaker: map['bookmaker'],
       bookmakerPrices: (map['bookmakerPrices'] as Map?)?.map(
@@ -341,6 +343,8 @@ class AccumulatorLeg {
       'kickoff': kickoff,
       'betType': betType.displayName,
       'selectionDescription': selectionDescription,
+      'marketName': marketName,
+      'pickValue': pickValue,
       'decimalOddsAtSelection': decimalOddsAtSelection,
       'bookmaker': bookmaker,
       'bookmakerPrices': bookmakerPrices,
@@ -720,6 +724,7 @@ class Fine {
   final DateTime createdAt;
   final String season;
   final DateTime? disputeDeadline;
+  final String? disputeReason;
   final bool paid;
   final DateTime? paidAt;
   final Map<String, bool> votes; // memberId -> true (uphold) / false (overturn)
@@ -736,6 +741,7 @@ class Fine {
     required this.createdAt,
     required this.season,
     this.disputeDeadline,
+    this.disputeReason,
     this.paid = false,
     this.paidAt,
     this.votes = const {},
@@ -759,6 +765,7 @@ class Fine {
       createdAt: map['createdAt'].toDate(),
       season: map['season'] ?? 'Unknown Season', // fines placed before this field existed
       disputeDeadline: (map['disputeDeadline'] as dynamic)?.toDate(),
+      disputeReason: map['disputeReason'] as String?,
       paid: map['paid'] ?? false,
       paidAt: (map['paidAt'] as dynamic)?.toDate(),
       votes: Map<String, bool>.from(map['votes'] ?? {}),
@@ -777,6 +784,7 @@ class Fine {
       'createdAt': createdAt,
       'season': season,
       'disputeDeadline': disputeDeadline,
+      'disputeReason': disputeReason,
       'votes': votes,
       'paid': paid,
       'paidAt': paidAt,

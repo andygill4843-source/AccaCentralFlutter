@@ -71,3 +71,51 @@ exports.sendPushOnNotification = onDocumentCreated("notifications/{notificationI
 });
 
 exports.liveMatchPoller = require('./livePoller').liveMatchPoller;
+
+
+// ── Dispute vote reminder ─────────────────────────────────────────────────
+// Runs daily. Finds disputed fines with exactly ~1 day left and sends a
+// reminder to members who haven't voted yet.
+exports.remindDisputeVoters = onSchedule('every 24 hours', async () => {
+  const now = new Date();
+  const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const in48h = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+
+  const disputedSnap = await db
+    .collection('fines')
+    .where('status', '==', 'disputed')
+    .get();
+
+  for (const doc of disputedSnap.docs) {
+    const fine = doc.data();
+    const deadline = fine.disputeDeadline?.toDate();
+    if (!deadline) continue;
+    // Only act when the deadline falls in the next 24–48 hour window
+    // (i.e. approximately 1 day left).
+    if (deadline < in24h || deadline > in48h) continue;
+
+    const membersSnap = await db
+      .collection('members')
+      .where('teamId', '==', fine.teamId)
+      .get();
+
+    const votes = fine.votes ?? {};
+
+    for (const memberDoc of membersSnap.docs) {
+      const memberId = memberDoc.id;
+      // Skip the fined member (can't vote on own fine) and those who already voted.
+      if (memberId === fine.memberId) continue;
+      if (votes[memberId] !== undefined) continue;
+
+      await db.collection('notifications').add({
+        teamId: fine.teamId,
+        recipientMemberId: memberId,
+        type: 'fineDisputeVote',
+        title: '⏰ Last chance to vote ⏰',
+        body: `${fine.memberName}'s dispute of the ${fine.fineType} fine closes in less than a day — cast your vote!`,
+        read: false,
+        createdAt: new Date(),
+      });
+    }
+  }
+});

@@ -29,8 +29,25 @@ function isCurrentlyWinning(leg, homeGoals, awayGoals, homeTeam, awayTeam) {
   const totalGoals = homeGoals + awayGoals;
   const desc = (leg.selectionDescription || '').toLowerCase().trim();
   const betType = (leg.betType || '').toLowerCase().replace(/\s/g, '');
+  // Preferred: the raw pick value stored at submission time. Falls back
+  // to legacy description-parsing only for legs submitted before this
+  // field existed. The old parsing checked whether selectionDescription
+  // contained a team's name — but selectionDescription always contains
+  // BOTH team names ("Pick — Home vs Away"), so that check could never
+  // correctly distinguish a home pick from an away one. pickValue/
+  // marketName avoid that collision entirely.
+  const pick = leg.pickValue ? String(leg.pickValue).toLowerCase().trim() : null;
+  const market = (leg.marketName || '').toLowerCase();
 
   if (betType.includes('matchwinner') || betType === '1x2') {
+    if (pick !== null) {
+      if (pick === 'home') return homeGoals > awayGoals;
+      if (pick === 'away') return awayGoals > homeGoals;
+      if (pick === 'draw') return homeGoals === awayGoals;
+      return false;
+    }
+    // Legacy fallback — best-effort only, has the home-first collision
+    // bug described above. Only reached for legs with no pickValue.
     if (desc.includes(homeTeam.toLowerCase()) || desc === 'home' || desc.includes('home win')) {
       return homeGoals > awayGoals;
     }
@@ -42,36 +59,62 @@ function isCurrentlyWinning(leg, homeGoals, awayGoals, homeTeam, awayTeam) {
   }
 
   if (betType.includes('bothteams') || betType === 'btts') {
-    const isYes = desc.includes('yes');
+    const valueStr = pick ?? desc;
+    const isYes = valueStr.includes('yes');
     return isYes ? (homeGoals > 0 && awayGoals > 0) : !(homeGoals > 0 && awayGoals > 0);
   }
 
   if (betType.includes('over') || betType.includes('under') || betType.includes('goals')) {
-    const lineMatch = desc.match(/(\d+\.?\d*)/);
+    // Team Totals also matches this betType check, so route it separately
+    // where team-side matters.
+    if (betType.includes('teamtotals')) {
+      const valueStr = pick ?? desc;
+      const lineMatch = valueStr.match(/(\d+\.?\d*)/);
+      if (!lineMatch) return false;
+      const line = parseFloat(lineMatch[1]);
+      let isHome;
+      if (leg.marketName) {
+        isHome = market.includes('home');
+      } else {
+        // Legacy fallback — same collision bug as match winner above.
+        isHome = desc.includes('home') || desc.includes(homeTeam.toLowerCase());
+      }
+      const teamGoals = isHome ? homeGoals : awayGoals;
+      if (valueStr.includes('over')) return teamGoals > line;
+      if (valueStr.includes('under')) return teamGoals < line;
+      return false;
+    }
+    const valueStr = pick ?? desc;
+    const lineMatch = valueStr.match(/(\d+\.?\d*)/);
     if (!lineMatch) return false;
     const line = parseFloat(lineMatch[1]);
-    const isHome = desc.includes('home') || desc.includes(homeTeam.toLowerCase());
-    const isAway = desc.includes('away') || desc.includes(awayTeam.toLowerCase());
-    const goals = isHome ? homeGoals : isAway ? awayGoals : totalGoals;
-    if (desc.includes('over')) return goals > line;
-    if (desc.includes('under')) return goals < line;
+    if (valueStr.includes('over')) return totalGoals > line;
+    if (valueStr.includes('under')) return totalGoals < line;
     return false;
   }
 
   if (betType.includes('correctscore') || betType.includes('exactscore')) {
-    const scoreMatch = desc.match(/(\d+)\s*[-–]\s*(\d+)/);
+    const valueStr = pick ?? desc;
+    const scoreMatch = valueStr.match(/(\d+)\s*[-–]\s*(\d+)/);
     if (!scoreMatch) return false;
     return homeGoals === parseInt(scoreMatch[1]) && awayGoals === parseInt(scoreMatch[2]);
   }
 
   if (betType.includes('doublechance')) {
-    if (desc.includes('1x') || desc.includes('home or draw')) return homeGoals >= awayGoals;
-    if (desc.includes('x2') || desc.includes('draw or away')) return awayGoals >= homeGoals;
-    if (desc.includes('12') || desc.includes('home or away')) return homeGoals !== awayGoals;
+    const valueStr = pick ?? desc;
+    if (valueStr.includes('1x') || valueStr.includes('home or draw')) return homeGoals >= awayGoals;
+    if (valueStr.includes('x2') || valueStr.includes('draw or away')) return awayGoals >= homeGoals;
+    if (valueStr.includes('12') || valueStr.includes('home or away')) return homeGoals !== awayGoals;
     return false;
   }
 
   if (betType.includes('drawnobet')) {
+    if (pick !== null) {
+      if (pick === 'home') return homeGoals > awayGoals;
+      if (pick === 'away') return awayGoals > homeGoals;
+      return false;
+    }
+    // Legacy fallback — same collision bug as match winner above.
     if (desc.includes(homeTeam.toLowerCase()) || desc.includes('home')) return homeGoals > awayGoals;
     if (desc.includes(awayTeam.toLowerCase()) || desc.includes('away')) return awayGoals > homeGoals;
     return false;
@@ -133,28 +176,38 @@ exports.liveMatchPoller = onSchedule(
 
     if (activeLegDocs.length === 0) return;
 
-    // ── 2. Deduplicate by fixture, collect league IDs ──────────────────────
+    // ── 2. Deduplicate by fixture ───────────────────────────────────────────
     const fixtureToLegs = {};
-    const leagueIds = new Set();
 
     for (const doc of activeLegDocs) {
       const leg = doc.data();
       const fid = leg.apiFootballFixtureId;
       if (!fixtureToLegs[fid]) fixtureToLegs[fid] = [];
       fixtureToLegs[fid].push({ id: doc.id, ...leg });
-      if (leg.apiFootballLeagueId) leagueIds.add(leg.apiFootballLeagueId);
     }
 
-    if (leagueIds.size === 0) return;
+    const fixtureIds = Object.keys(fixtureToLegs).map(Number);
+    if (fixtureIds.length === 0) return;
 
-    // ── 3. Fetch live fixtures for relevant leagues only ───────────────────
-    const leagueStr = [...leagueIds].join('-');
-    const liveData = await apiGet(`/fixtures?live=${leagueStr}`);
-    const liveFixtures = liveData.response ?? [];
-
+    // ── 3. Fetch current status for exactly these fixtures ─────────────────
+    // Using /fixtures?ids=... instead of /fixtures?live=... because the
+    // live= endpoint only returns matches currently in progress — a
+    // finished match (FT/AET/PEN) drops out of that response the moment
+    // it ends, making settlement unreachable. ids= returns the fixture's
+    // current status regardless of whether it's live, finished, or not
+    // yet started, so both event-processing and settlement work off the
+    // same reliable source. Batched at 20 IDs per call (API-Football's
+    // documented cap for this parameter — verify against current docs
+    // if this starts erroring).
+    const BATCH_SIZE = 20;
     const liveById = {};
-    for (const f of liveFixtures) {
-      liveById[f.fixture.id] = f;
+
+    for (let i = 0; i < fixtureIds.length; i += BATCH_SIZE) {
+      const batch = fixtureIds.slice(i, i + BATCH_SIZE);
+      const batchData = await apiGet(`/fixtures?ids=${batch.join('-')}`);
+      for (const f of (batchData.response ?? [])) {
+        liveById[f.fixture.id] = f;
+      }
     }
 
     // ── 4. Process each fixture ────────────────────────────────────────────

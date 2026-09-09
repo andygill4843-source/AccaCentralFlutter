@@ -5,7 +5,6 @@ import 'main.dart';
 import 'odds_format.dart';
 import 'api_football_service.dart';
 import 'odds_orchestrator.dart';
-
 class PickOutcomeScreen extends StatefulWidget {
   final ApiFootballFixture fixture;
   final String leagueKey;    // e.g. 'soccer_epl' — needed for The Odds API call
@@ -14,7 +13,6 @@ class PickOutcomeScreen extends StatefulWidget {
   final String teamId;
   final String? tournamentMatchId;
   final bool isSecondaryTournamentLeg;
-
   const PickOutcomeScreen({
     super.key,
     required this.fixture,
@@ -25,11 +23,9 @@ class PickOutcomeScreen extends StatefulWidget {
     this.tournamentMatchId,
     this.isSecondaryTournamentLeg = false,
   });
-
   @override
   State<PickOutcomeScreen> createState() => _PickOutcomeScreenState();
 }
-
 class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
   FixtureOddsCache? oddsCache;
   bool isLoading = true;
@@ -38,13 +34,11 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
   final Map<String, bool> _expanded = {};
   int? _selectedHomeScore;
   int? _selectedAwayScore;
-
   @override
   void initState() {
     super.initState();
     loadOdds();
   }
-
   Future<void> loadOdds() async {
     try {
       final cache = await OddsOrchestrator.instance.fetchOrCache(
@@ -68,9 +62,7 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       });
     }
   }
-
   // ── Market helpers ────────────────────────────────────────────────────────
-
   BetType _mapBetType(String marketName, {String? value}) {
     final n = marketName.toLowerCase();
     if (n.contains('btts') && n.contains('goals')) {
@@ -93,7 +85,6 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     if (n.contains('goalscorer') || n.contains('anytime')) { return BetType.anytimeScorer; }
     return BetType.other;
   }
-
   int _marketPriority(String marketName) {
     final n = marketName.toLowerCase();
     if (n.contains('match winner')) { return 0; }
@@ -107,7 +98,6 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     if (n.contains('alternate totals')) { return 8; }
     return 99;
   }
-
   List<MapEntry<String, List<Map<String, dynamic>>>> _orderedMarkets() {
     if (oddsCache == null) return [];
     final entries = oddsCache!.bestOdds.entries.toList();
@@ -118,11 +108,16 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     });
     return entries;
   }
-
   String _formatPickLabel(String value, String? line, BetType betType, String marketName) {
     final base = (line != null && !value.toLowerCase().contains(line.toLowerCase()))
         ? '$value $line'
         : value;
+    if (betType == BetType.matchWinner) {
+      final v = value.toLowerCase();
+      if (v == 'home') return widget.fixture.homeTeam;
+      if (v == 'away') return widget.fixture.awayTeam;
+      if (v == 'draw') return 'Draw';
+    }
     if (betType == BetType.teamTotals) {
       final n = marketName.toLowerCase();
       if (n.contains('home')) return '${widget.fixture.homeTeam} $base Goals';
@@ -131,9 +126,7 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     if (betType == BetType.overUnderGoals) return '$base Game Goals';
     return base;
   }
-
   // ── Submission ────────────────────────────────────────────────────────────
-
   Future<void> submit({
     required String value,
     required double bestOdd,
@@ -143,11 +136,9 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
   }) async {
     if (isSubmitting || oddsCache == null) return;
     setState(() { isSubmitting = true; errorMessage = null; });
-
     final pickLabel = _formatPickLabel(value, line, betType, marketName);
     final selectionDescription =
         '$pickLabel — ${widget.fixture.homeTeam} vs ${widget.fixture.awayTeam}';
-
     // Collect per-bookmaker prices for this market+value for the manager's
     // combined odds screen.
     final bookmakerPrices = <String, double>{};
@@ -159,12 +150,10 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     }
     // ignore: avoid_print
     print('bookmakerPrices keys: ${bookmakerPrices.keys.join(', ')}');
-
     // Best bookmaker for this specific outcome.
     final bestBookmaker = bookmakerPrices.isNotEmpty
         ? bookmakerPrices.entries.reduce((a, b) => a.value > b.value ? a : b).key
         : '';
-
     try {
       final physioProtected = await FirestoreService.instance.hasPhysioProtectionPending(
         teamId: widget.teamId,
@@ -181,6 +170,8 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
         kickoff: widget.fixture.kickoff,
         betType: betType,
         selectionDescription: selectionDescription,
+        marketName: marketName,
+        pickValue: value,
         decimalOddsAtSelection: bestOdd,
         bookmaker: bestBookmaker,
         bookmakerPrices: bookmakerPrices,
@@ -201,30 +192,23 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       setState(() { isSubmitting = false; errorMessage = e.toString(); });
     }
   }
-
   // ── Correct score special handling ────────────────────────────────────────
-
   Future<void> submitCorrectScore({required String marketName}) async {
     if (_selectedHomeScore == null || _selectedAwayScore == null) return;
-
     // API Football returns scores as "1:0" (colon); normalise both sides
     // to hyphen format for comparison.
     String normaliseScore(String s) =>
         s.replaceAll(':', '-').replaceAll(' ', '').trim();
-
     final selectedValue = '$_selectedHomeScore-$_selectedAwayScore';
-
     // The market may be stored as "Exact Score" (API Football) or
     // "Correct Score" (other sources) — check both.
     final market = oddsCache?.bestOdds[marketName] ??
         oddsCache?.bestOdds['Correct Score'] ??
         oddsCache?.bestOdds['Exact Score'];
-
     if (market == null) {
       setState(() => errorMessage = 'No correct score odds available.');
       return;
     }
-
     final match = market.firstWhere(
       (v) => normaliseScore(v['value'].toString()) == selectedValue,
       orElse: () => {},
@@ -241,9 +225,7 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       marketName: marketName,
     );
   }
-
   // ── Build ─────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -289,7 +271,6 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
                 ),
     );
   }
-
   Widget _marketSection(String marketName, List<Map<String, dynamic>> outcomes) {
     final betType = _mapBetType(marketName);
     if (betType == BetType.correctScore) {
@@ -350,7 +331,6 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       ),
     );
   }
-
   Widget _outcomeRow({
     required String value,
     required double odd,
@@ -395,7 +375,6 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       ),
     );
   }
-
   Widget _correctScoreSection(String marketName) {
     return Container(
       decoration: BoxDecoration(
@@ -444,7 +423,6 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       ),
     );
   }
-
   Widget _scorePicker(String teamName, bool isHome) {
     final selected = isHome ? _selectedHomeScore : _selectedAwayScore;
     return Column(

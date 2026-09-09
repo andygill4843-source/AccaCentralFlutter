@@ -7,6 +7,11 @@ import 'main.dart'; // for AccaColors
 import 'odds_format.dart';
 import 'odds_orchestrator.dart';
 import 'api_football_service.dart';
+import 'odds_api_service.dart';
+
+/// Converts an API bookmaker key to a human-readable display name.
+String _bookmakerDisplayName(String key) =>
+    OddsApiService.bookmakerDisplayNames[key] ?? key;
 class _BookmakerOption {
   final String bookmaker;
   final double combinedOdds;
@@ -210,7 +215,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Bookmaker selected'),
         content: Text(
-          "You can go to ${option.bookmaker}'s site, remain on the app with the odds locked in, or return and reselect.",
+          "You can go to ${_bookmakerDisplayName(option.bookmaker)}'s site, remain on the app with the odds locked in, or return and reselect.",
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, 'return'), child: const Text('Return and reselect')),
@@ -245,7 +250,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
   String buildLegListText(_BookmakerOption option) {
     final buffer = StringBuffer();
     buffer.writeln('Acca Central — Gameweek ${widget.gameWeek.weekNumber}');
-    buffer.writeln('Bookmaker: ${option.bookmaker}');
+    buffer.writeln('Bookmaker: ${_bookmakerDisplayName(option.bookmaker)}');
     buffer.writeln('Combined odds: ${decimalToFractional(option.combinedOdds)}');
     buffer.writeln();
     for (final leg in primaryLegs) {
@@ -253,7 +258,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
       buffer.writeln('$name: ${leg.selectionDescription}');
       final price = (leg.bookmakerPrices ?? {})[option.bookmaker];
       if (price != null) {
-        buffer.writeln('  ${decimalToFractional(price)} @ ${option.bookmaker}');
+        buffer.writeln('  ${decimalToFractional(price)} @ ${_bookmakerDisplayName(option.bookmaker)}');
       }
     }
     return buffer.toString();
@@ -415,7 +420,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(option.bookmaker, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text(_bookmakerDisplayName(option.bookmaker), style: const TextStyle(fontWeight: FontWeight.w600)),
                       Text('Combined odds: ${decimalToFractional(option.combinedOdds)}', style: const TextStyle(fontSize: 12)),
                     ],
                   ),
@@ -465,7 +470,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                   Text(leg.fixtureDescription, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                   Text(leg.selectionDescription, style: const TextStyle(fontSize: 13)),
                   Text(
-                    '${decimalToFractional(leg.decimalOddsAtSelection)} — ${leg.bookmaker}',
+                    '${decimalToFractional(leg.decimalOddsAtSelection)} — ${_bookmakerDisplayName(leg.bookmaker)}',
                     style: TextStyle(fontSize: 12, color: AccaColors.textSecondary),
                   ),
                 ],

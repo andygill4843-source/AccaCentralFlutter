@@ -903,7 +903,7 @@ class FirestoreService {
     final snapshot = await _db.collection('fines').where('teamId', isEqualTo: teamId).get();
     final fines = snapshot.docs.map((doc) => Fine.fromMap(doc.id, doc.data())).toList();
 
-    // Resolve any disputes whose 5-day window has passed — client-side
+    // Resolve any disputes whose 3-day window has passed — client-side
     // check, run whenever anyone loads the fines list, since there's no
     // scheduled backend job for this yet.
     final now = DateTime.now();
@@ -932,6 +932,28 @@ class FirestoreService {
 
   Future<void> createFine(Fine fine) async {
     await _db.collection('fines').add(fine.toMap());
+    // Notify the whole team — everyone should know when someone's been fined.
+    final members = await fetchMembers(fine.teamId);
+    final allMemberIds = [for (final m in members) if (m.id != null) m.id!];
+    final otherMemberIds = allMemberIds.where((id) => id != fine.memberId).toList();
+    // Personal notification to the fined member.
+    await sendNotification(
+      teamId: fine.teamId,
+      recipientMemberIds: [fine.memberId],
+      type: NotificationType.fineIssued,
+      title: '👺 Fine issued 👺',
+      body: 'You have been fined by the gaffa — ${fine.fineType.displayName}.',
+    );
+    // Squad-wide notification to everyone else.
+    if (otherMemberIds.isNotEmpty) {
+      await sendNotification(
+        teamId: fine.teamId,
+        recipientMemberIds: otherMemberIds,
+        type: NotificationType.fineIssued,
+        title: '👺 The gaffa\'s put their foot down 👺',
+        body: 'Enough is enough! ${fine.memberName} has been fined by the gaffa.',
+      );
+    }
   }
 
   // ============================================================
@@ -1033,13 +1055,18 @@ class FirestoreService {
     );
   }
 
-  Future<void> respondToFine({required String fineId, required bool accept}) async {
+  Future<void> respondToFine({
+    required String fineId,
+    required bool accept,
+    String? disputeReason,
+  }) async {
     if (accept) {
       await _db.collection('fines').doc(fineId).update({'status': FineStatus.accepted.value});
     } else {
       await _db.collection('fines').doc(fineId).update({
         'status': FineStatus.disputed.value,
-        'disputeDeadline': DateTime.now().add(const Duration(days: 5)),
+        'disputeDeadline': DateTime.now().add(const Duration(days: 3)),
+        if (disputeReason != null && disputeReason.isNotEmpty) 'disputeReason': disputeReason,
       });
       final fineDoc = await _db.collection('fines').doc(fineId).get();
       if (fineDoc.exists) {
@@ -1050,7 +1077,7 @@ class FirestoreService {
           recipientMemberIds: [for (final m in members) if (m.id != null) m.id!],
           type: NotificationType.fineDisputeVote,
           title: '🤔 Dispute lodged ✍️',
-          body: '${fine.memberName} has disouted the gaffa\'s fine. Get your vote it!',
+          body: '${fine.memberName} has disputed the gaffa\'s fine. Get your vote in!',
         );
       }
     }

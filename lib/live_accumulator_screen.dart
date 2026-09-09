@@ -20,6 +20,8 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
   Map<int, ApiFootballFixture> fixtures = {};
   // fixtureId → events list
   Map<int, List<ApiFootballEvent>> events = {};
+  // memberId → displayName, for showing names instead of raw IDs.
+  Map<String, String> memberNames = {};
   bool isLoading = true;
   String? errorMessage;
   Timer? pollTimer;
@@ -70,11 +72,13 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
     }
     try {
       final allLegs = await FirestoreService.instance.fetchLegs(widget.gameWeek.teamId);
+      final members = await FirestoreService.instance.fetchMembers(widget.gameWeek.teamId);
       if (mounted) {
         setState(() {
           legs = allLegs
               .where((l) => l.gameWeekId == widget.gameWeek.id && !l.isSecondaryTournamentLeg)
               .toList();
+          memberNames = {for (final m in members) if (m.id != null) m.id!: m.displayName};
           isLoading = false;
         });
       }
@@ -291,7 +295,10 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
                 children: [
                   for (final leg in group.legs)
                     Chip(
-                      label: Text(leg.memberId, style: const TextStyle(fontSize: 11)),
+                      label: Text(
+                        memberNames[leg.memberId] ?? 'Unknown',
+                        style: const TextStyle(fontSize: 11),
+                      ),
                       padding: EdgeInsets.zero,
                       visualDensity: VisualDensity.compact,
                       backgroundColor: AccaColors.surface,

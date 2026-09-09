@@ -115,8 +115,59 @@ class _FinesScreenState extends State<FinesScreen> {
   }
   Future<void> respond(Fine fine, bool accept) async {
     if (fine.id == null) return;
+    // If disputing, show a dialog for the member to enter their reason.
+    if (!accept) {
+      final reasonController = TextEditingController();
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Dispute this fine?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Your reason will be shown to the rest of the squad when they vote.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: reasonController,
+                maxLines: 3,
+                maxLength: 200,
+                decoration: const InputDecoration(
+                  hintText: 'Why are you disputing this fine?',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Dispute', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      try {
+        await FirestoreService.instance.respondToFine(
+          fineId: fine.id!,
+          accept: false,
+          disputeReason: reasonController.text.trim(),
+        );
+        await load();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        }
+      }
+      return;
+    }
     try {
-      await FirestoreService.instance.respondToFine(fineId: fine.id!, accept: accept);
+      await FirestoreService.instance.respondToFine(fineId: fine.id!, accept: true);
       await load();
     } catch (e) {
       if (mounted) {
@@ -279,6 +330,31 @@ class _FinesScreenState extends State<FinesScreen> {
           children: [
             Text('${fine.memberName} — ${fine.fineType.displayName}', style: const TextStyle(fontWeight: FontWeight.bold)),
             Text(fine.reason, style: const TextStyle(fontSize: 13)),
+            const SizedBox(height: 4),
+            if (fine.disputeReason != null && fine.disputeReason!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.amber.shade300),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('💬 ', style: TextStyle(fontSize: 13)),
+                    Expanded(
+                      child: Text(
+                        fine.disputeReason!,
+                        style: const TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 4),
             const SizedBox(height: 4),
             Text('$daysLeft day${daysLeft == 1 ? '' : 's'} left to vote · Uphold: $upholdCount · Overturn: $overturnCount',
                 style: TextStyle(fontSize: 12, color: AccaColors.textSecondary)),
