@@ -81,8 +81,28 @@ class _HomeScreenState extends State<HomeScreen> {
       load();
     }
   }
+  /// Blocks sending another nudge to the same member within an hour of
+  /// their most recent one. Checked against their recent notifications
+  /// (last 50, newest first) rather than a dedicated query — plenty for
+  /// catching anything within the last hour in practice.
   Future<void> nudge(Member member) async {
     if (member.id == null) return;
+    final recent = await FirestoreService.instance.fetchNotifications(
+      teamId: widget.teamId,
+      memberId: member.id!,
+    );
+    final oneHourAgo = DateTime.now().subtract(const Duration(hours: 1));
+    final alreadyNudged = recent.any(
+      (n) => n.type == NotificationType.nudge && n.createdAt.isAfter(oneHourAgo),
+    );
+    if (alreadyNudged) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${member.displayName} was already nudged in the last hour.')),
+        );
+      }
+      return;
+    }
     await FirestoreService.instance.sendNotification(
       teamId: widget.teamId,
       recipientMemberIds: [member.id!],
@@ -560,14 +580,12 @@ class _HomeScreenState extends State<HomeScreen> {
       (r) => r.emoji == emoji && r.reactorMemberId == currentMember?.id,
     );
     return GestureDetector(
-      onTap: () {
-        if (count > 0 && !myReaction) {
-          // Show who reacted before committing to adding your own.
-          _showReactors(context, emoji, legReactions);
-        } else {
-          _react(leg, emoji);
-        }
-      },
+      // Tap always toggles your own reaction — whether you're the first
+      // person to react with this emoji or joining others already there.
+      // Seeing who else reacted is long-press only (below); the previous
+      // "show reactors first" gate on tap meant nobody after the first
+      // reactor could ever add their own reaction via tap.
+      onTap: () => _react(leg, emoji),
       onLongPress: () => _showReactors(context, emoji, legReactions),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),

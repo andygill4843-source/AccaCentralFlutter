@@ -45,6 +45,22 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
     }
   }
 
+  Future<void> _logOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Log out?'),
+        content: const Text("You'll need to join or create a team next time you log in."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Log out')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await widget.appState.logOut();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -52,6 +68,13 @@ class _TeamSetupScreenState extends State<TeamSetupScreen> {
         title: const Text('Team Setup'),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Log out',
+            onPressed: isLoading ? null : _logOut,
+          ),
+        ],
       ),
       backgroundColor: AccaColors.background,
       body: SafeArea(

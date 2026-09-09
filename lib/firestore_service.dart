@@ -4,6 +4,7 @@ import 'models.dart';
 import 'package:uuid/uuid.dart';
 import 'scoring_engine.dart'; // for LeagueTableEntry
 import 'tournament_bracket_engine.dart';
+import 'odds_format.dart';
 
 class FirestoreService {
   static final FirestoreService instance = FirestoreService._();
@@ -30,6 +31,10 @@ class FirestoreService {
     final doc = await _db.collection('seasonSettings').doc(_seasonSettingsDocId(teamId, season)).get();
     if (!doc.exists) return null;
     return SeasonSettings.fromMap(doc.id, doc.data()!);
+  }
+
+  Future<void> updateMemberDisplayName({required String memberDocId, required String newDisplayName}) async {
+  await _db.collection('members').doc(memberDocId).update({'displayName': newDisplayName});
   }
 
   Future<void> updateGameWeekDeadline({required String gameWeekId, required DateTime newDeadline}) async {
@@ -1179,7 +1184,7 @@ class FirestoreService {
       recipientMemberIds: [for (final m in members) if (m.id != null) m.id!],
       type: NotificationType.gameweekLocked,
       title: '🔐 Gameweek locked 🔐',
-      body: 'Gameweek $weekNumber is locked in with $bookmaker — combined odds ${combinedOdds.toStringAsFixed(2)}.',
+      body: 'Gameweek $weekNumber is locked in with $bookmaker — combined odds ${decimalToFractional(combinedOdds)}.'
     );
     await resolveTournamentWalkovers(teamId: teamId, gameWeekId: gameWeekId);
   }

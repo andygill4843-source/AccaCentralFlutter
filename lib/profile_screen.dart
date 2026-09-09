@@ -20,6 +20,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   List<SeasonSummary> seasonSummaries = [];
   bool isLoading = true;
   String? errorMessage;
+  bool isSavingDisplayName = false;
   @override
   void initState() {
     super.initState();
@@ -70,6 +71,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
     load();
   }
+
+  /// Display name is per-team (Member.displayName), not account-wide —
+  /// this only updates how the current member appears on the active team.
+  /// Other teams the user belongs to are unaffected, and historical
+  /// records (fines, reactions, past challenges, etc.) that snapshot a
+  /// name at the time keep their original text — only future references
+  /// (which look up the live member list) show the new name.
+  Future<void> editDisplayName() async {
+    if (member?.id == null) return;
+    final controller = TextEditingController(text: member!.displayName);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Update display name'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'This changes how you appear on this team only.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Display name'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () {
+              final trimmed = controller.text.trim();
+              if (trimmed.isEmpty) return;
+              Navigator.pop(dialogContext, trimmed);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (newName == null || newName == member!.displayName || !mounted) return;
+    setState(() => isSavingDisplayName = true);
+    try {
+      await FirestoreService.instance.updateMemberDisplayName(
+        memberDocId: member!.id!,
+        newDisplayName: newName,
+      );
+      await load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't update display name: ${e.toString()}")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isSavingDisplayName = false);
+    }
+  }
   
   @override
   Widget build(BuildContext context) {
@@ -89,7 +151,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _row('Display name', user?.displayName ?? '—'),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _row('Display name', member?.displayName ?? user?.displayName ?? '—'),
+                      ),
+                      if (member?.id != null)
+                        isSavingDisplayName
+                            ? const Padding(
+                                padding: EdgeInsets.only(top: 8),
+                                child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                              )
+                            : IconButton(
+                                icon: const Icon(Icons.edit, size: 18),
+                                tooltip: 'Edit display name',
+                                onPressed: editDisplayName,
+                              ),
+                    ],
+                  ),
                   _row('Username', user?.username ?? '—'),
                   _row('Email', user?.email ?? '—'),
                   const Divider(height: 32),

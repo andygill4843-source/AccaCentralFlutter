@@ -438,6 +438,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
           SnackBar(content: Text('${winner.displayName} crowned champion of ${team.season}!')),
         );
         loadCurrentSeason();
+        suggestNextWeekNumber();
       }
     } catch (e) {
       if (mounted) {

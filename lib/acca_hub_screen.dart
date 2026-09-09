@@ -36,6 +36,11 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
   bool isLoading = true;
   bool get isManager => currentMember?.role == MemberRole.manager;
 
+  static const List<String> _monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -315,7 +320,8 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     );
   }
 
-  String _formatDate(DateTime dt) => '${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  String _formatDate(DateTime dt) =>
+      '${dt.day} ${_monthNames[dt.month - 1]} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
