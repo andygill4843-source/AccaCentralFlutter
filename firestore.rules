@@ -174,7 +174,7 @@ service cloud.firestore {
       allow update: if isMemberOfTeam(resource.data.teamId)
         && (
           (ownsMemberDoc(resource.data.memberId)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'disputeDeadline']))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'disputeDeadline', 'disputeReason']))
           ||
           // Any team member can cast/change their own vote during a dispute.
           (resource.data.status == 'disputed'

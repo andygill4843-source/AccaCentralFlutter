@@ -113,24 +113,16 @@ class OddsApiService {
     );
 
     final response = await http.get(url);
-    // ignore: avoid_print
-    print('OddsApiService.fetchEventId: status=${response.statusCode} league=$leagueKey looking for "$homeTeam vs $awayTeam"');
     if (response.statusCode != 200) return null;
 
     final List<dynamic> events = jsonDecode(response.body);
-    // ignore: avoid_print
-    print('OddsApiService.fetchEventId: ${events.length} events returned');
     for (final event in events) {
       final h = event['home_team'] as String;
       final a = event['away_team'] as String;
       if (matchFixture(h, a, homeTeam, awayTeam)) {
-        // ignore: avoid_print
-        print('OddsApiService.fetchEventId: matched "$h vs $a" → ${event['id']}');
         return event['id'] as String;
       }
     }
-    // ignore: avoid_print
-    print('OddsApiService.fetchEventId: no match found among: ${events.map((e) => '"${e['home_team']} vs ${e['away_team']}"').join(', ')}');
     return null;
   }
 
@@ -154,8 +146,6 @@ class OddsApiService {
     );
 
     final response = await http.get(url);
-    // ignore: avoid_print
-    print('OddsApiService.fetchPerEventOdds: status=${response.statusCode} eventId=$eventId');
     if (response.statusCode != 200) return {};
 
     final Map<String, dynamic> data = jsonDecode(response.body);

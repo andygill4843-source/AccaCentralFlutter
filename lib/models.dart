@@ -546,14 +546,10 @@ class FixtureOddsCache {
   double? bookmakerOddFor(String bookmakerKey, String marketName, String value) {
     final bmData = bookmakerOdds[bookmakerKey];
     if (bmData == null) {
-      // ignore: avoid_print
-      print('bookmakerOddFor: no data for bookmaker=$bookmakerKey (available: ${bookmakerOdds.keys.join(', ')})');
       return null;
     }
     final market = bmData[marketName];
     if (market == null) {
-      // ignore: avoid_print
-      print('bookmakerOddFor: no market=$marketName for bookmaker=$bookmakerKey (available: ${bmData.keys.join(', ')})');
       return null;
     }
     final match = market.firstWhere(
@@ -561,8 +557,6 @@ class FixtureOddsCache {
       orElse: () => {},
     );
     if (match.isEmpty) {
-      // ignore: avoid_print
-      print('bookmakerOddFor: no value=$value in market=$marketName for bookmaker=$bookmakerKey (values: ${market.map((v) => v['value']).join(', ')})');
       return null;
     }
     return (match['odd'] as num?)?.toDouble();

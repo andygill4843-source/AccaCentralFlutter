@@ -3,7 +3,6 @@ import 'odds_api_service.dart';
 import 'firestore_service.dart';
 import 'models.dart';
 import 'poisson_combo_service.dart';
-
 /// Coordinates odds fetching across API Football (Bet365) and The Odds API
 /// (Paddy Power, Ladbrokes, William Hill, Sky Bet, Coral), merging results
 /// into a single FixtureOddsCache stored in Firestore.
@@ -13,7 +12,6 @@ import 'poisson_combo_service.dart';
 class OddsOrchestrator {
   static final OddsOrchestrator instance = OddsOrchestrator._();
   OddsOrchestrator._();
-
   // All 6 bookmaker keys in display order for the manager's selection screen.
   static const List<String> allBookmakers = [
     'bet365',
@@ -23,10 +21,8 @@ class OddsOrchestrator {
     'skybet',
     'coral',
   ];
-
   static String bookmakerDisplayName(String key) =>
       OddsApiService.bookmakerDisplayNames[key] ?? key;
-
   /// Returns cached odds for a fixture, fetching and caching if needed.
   /// [leagueKey] is the The Odds API league key (e.g. 'soccer_epl').
   Future<FixtureOddsCache?> fetchOrCache({
@@ -41,13 +37,8 @@ class OddsOrchestrator {
     final existing = await FirestoreService.instance
         .fetchFixtureOddsCache(apiFootballFixtureId);
     if (existing != null) {
-      // ignore: avoid_print
-      print('OddsOrchestrator: CACHE HIT fixture=$apiFootballFixtureId bookmakers=${existing.bookmakerOdds.keys.join(', ')}');
       return existing;
     }
-    // ignore: avoid_print
-    print('OddsOrchestrator: no cache for fixture=$apiFootballFixtureId — fetching fresh');
-
     // Not cached — fetch from both APIs.
     return _fetchAndCache(
       apiFootballFixtureId: apiFootballFixtureId,
@@ -58,7 +49,6 @@ class OddsOrchestrator {
       kickoff: kickoff,
     );
   }
-
   /// Force re-fetches odds regardless of cache — used by the refresh button.
   Future<FixtureOddsCache?> refresh({
     required int apiFootballFixtureId,
@@ -75,7 +65,6 @@ class OddsOrchestrator {
         awayTeam: awayTeam,
         kickoff: kickoff,
       );
-
   Future<FixtureOddsCache?> _fetchAndCache({
     required int apiFootballFixtureId,
     required int apiFootballLeagueId,
@@ -86,7 +75,6 @@ class OddsOrchestrator {
   }) async {
     // Merged per-bookmaker odds: bookmakerKey → marketName → [NormalisedOddsValue]
     final combined = <String, Map<String, List<NormalisedOddsValue>>>{};
-
     // ── API Football → Bet365 ────────────────────────────────────────────────
     try {
       final bet365Raw = await ApiFootballService.instance
@@ -102,7 +90,6 @@ class OddsOrchestrator {
     } catch (_) {
       // best-effort — proceed without Bet365 if the call fails
     }
-
     // ── The Odds API → 5 bookmakers ──────────────────────────────────────────
     try {
       // Step 1: get the Odds API event ID via /events, using improved
@@ -113,17 +100,12 @@ class OddsOrchestrator {
         homeTeam:    homeTeam,
         awayTeam:    awayTeam,
       );
-
       if (eventId != null) {
-        // ignore: avoid_print
-        print('OddsOrchestrator: found event ID $eventId for $homeTeam vs $awayTeam');
         // Step 2: per-event call for ALL markets in one request.
         final perEventRaw = await OddsApiService.instance.fetchPerEventOdds(
           leagueKey: leagueKey,
           eventId:   eventId,
         );
-        // ignore: avoid_print
-        print('OddsOrchestrator: per-event returned ${perEventRaw.length} bookmakers: ${perEventRaw.keys.join(', ')}');
         final normalised = OddsApiService.normalisePerEventOdds(
           raw:      perEventRaw,
           homeTeam: homeTeam,
@@ -142,12 +124,10 @@ class OddsOrchestrator {
           combined.addAll(OddsApiService.normaliseOddsApiFixture(fallback));
         }
       }
-    } catch (e) {
-      // ignore: avoid_print
-      print('OddsOrchestrator: The Odds API failed for $leagueKey: $e');
+    } catch (_) {
+      // best-effort — proceed with whatever combined already has
     }
     if (combined.isEmpty) return null;
-
     // ── Fill missing Goals Over/Under from Alternate Totals ──────────────────
     // Paddy Power, Sky Bet, Coral, Ladbrokes don't offer the standard totals
     // market but DO include alternate_totals which has Over/Under 2.5 lines.
@@ -165,7 +145,6 @@ class OddsOrchestrator {
       ];
       if (extracted.isNotEmpty) { combined[bmKey]!['Goals Over/Under'] = extracted; }
     }
-
     // ── Per-bookmaker combo estimate (simple multiplication) ─────────────────
     // Used only for the manager's combined odds view — each bookmaker's own
     // btts × totals gives a per-bookmaker combo price. These are stored in
@@ -175,18 +154,15 @@ class OddsOrchestrator {
       final bttsMarket = bmMarkets['Both Teams Score'];
       final totalsMarket = bmMarkets['Goals Over/Under'];
       if (bttsMarket == null || totalsMarket == null) continue;
-
       double? oddFor(List<NormalisedOddsValue> market, String value) {
         try {
           return market.firstWhere((v) => v.value.toLowerCase() == value.toLowerCase()).odd;
         } catch (_) { return null; }
       }
-
       final bttsYes = oddFor(bttsMarket, 'Yes');
       final bttsNo  = oddFor(bttsMarket, 'No');
       final over25  = oddFor(totalsMarket, 'Over 2.5');
       final under25 = oddFor(totalsMarket, 'Under 2.5');
-
       final combos = <NormalisedOddsValue>[];
       if (bttsYes != null && over25  != null) { combos.add(NormalisedOddsValue(value: 'BTTS Yes & Over 2.5',  odd: double.parse((bttsYes * over25 ).toStringAsFixed(2)))); }
       if (bttsYes != null && under25 != null) { combos.add(NormalisedOddsValue(value: 'BTTS Yes & Under 2.5', odd: double.parse((bttsYes * under25).toStringAsFixed(2)))); }
@@ -194,10 +170,8 @@ class OddsOrchestrator {
       if (bttsNo  != null && under25 != null) { combos.add(NormalisedOddsValue(value: 'BTTS No & Under 2.5',  odd: double.parse((bttsNo  * under25).toStringAsFixed(2)))); }
       if (combos.isNotEmpty) { combined[bmKey]!['BTTS & Goals (Est.)'] = combos; }
     }
-
     // ── Merge into best odds ─────────────────────────────────────────────────
     final merged = OddsMerger.merge(combined);
-
     // ── Serialise for Firestore ───────────────────────────────────────────────
     final bookmakerOddsMap = <String, Map<String, List<Map<String, dynamic>>>>{};
     for (final bmEntry in combined.entries) {
@@ -210,7 +184,6 @@ class OddsOrchestrator {
     for (final entry in merged.bestOdds.entries) {
       bestOddsMap[entry.key] = entry.value.map((v) => v.toMap()).toList();
     }
-
     // ── Override combo best odds with Poisson estimates ───────────────────────
     // The merged best odds for BTTS & Goals (Est.) used simple multiplication.
     // Replace them with Poisson-calibrated estimates, which correctly capture
@@ -224,12 +197,10 @@ class OddsOrchestrator {
         return (match['odd'] as num?)?.toDouble();
       } catch (_) { return null; }
     }
-
     final over25   = bestOdd('Goals Over/Under', 'Over 2.5');
     final under25  = bestOdd('Goals Over/Under', 'Under 2.5');
     final bttsYes  = bestOdd('Both Teams Score', 'Yes');
     final bttsNo   = bestOdd('Both Teams Score', 'No');
-
     if (over25 != null && under25 != null && bttsYes != null && bttsNo != null) {
       final estimate = PoissonComboService.estimateAllCombos(
         over25Odds:   over25,
@@ -248,7 +219,6 @@ class OddsOrchestrator {
         ];
       }
     }
-
     final cache = FixtureOddsCache(
       apiFootballFixtureId: apiFootballFixtureId,
       homeTeam: homeTeam,
@@ -260,15 +230,9 @@ class OddsOrchestrator {
       bestOdds: bestOddsMap,
       fetchedAt: DateTime.now(),
     );
-
     await FirestoreService.instance.saveFixtureOddsCache(cache);
-    // ignore: avoid_print
-    print('OddsOrchestrator: cache saved with bookmakers: ${cache.bookmakerOdds.keys.join(', ')}');
-    // ignore: avoid_print
-    print('OddsOrchestrator: bestOdds markets: ${cache.bestOdds.keys.join(', ')}');
     return cache;
   }
-
   /// Returns the combined decimal odds for a bookmaker across a list of
   /// fixture caches and their selected market values.
   double combinedOddsForBookmaker(

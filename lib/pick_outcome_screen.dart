@@ -144,12 +144,8 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     final bookmakerPrices = <String, double>{};
     for (final bmKey in OddsOrchestrator.allBookmakers) {
       final price = oddsCache!.bookmakerOddFor(bmKey, marketName, value);
-      // ignore: avoid_print
-      print('bookmakerOddFor($bmKey, $marketName, $value) = $price');
       if (price != null && price > 0) bookmakerPrices[bmKey] = price;
     }
-    // ignore: avoid_print
-    print('bookmakerPrices keys: ${bookmakerPrices.keys.join(', ')}');
     // Best bookmaker for this specific outcome.
     final bestBookmaker = bookmakerPrices.isNotEmpty
         ? bookmakerPrices.entries.reduce((a, b) => a.value > b.value ? a : b).key

@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:flutter/foundation.dart';
 
 /// Handles all API Football (v3.football.api-sports.io) calls:
 ///   - Fixture list fetching (used by gameweek setup)
@@ -41,8 +40,6 @@ class ApiFootballService {
   Map<String, String> get _headers => {'x-apisports-key': _apiKey};
 
   Future<Map<String, dynamic>> _get(String path) async {
-    debugPrint('API Football key length: ${_apiKey.length}'); // ← add this
-    debugPrint('API Football key: ${_apiKey.substring(0, _apiKey.isEmpty ? 0 : 4)}...'); // first 4 chars only
     final response = await http.get(
       Uri.parse('$_baseUrl$path'),
       headers: _headers,
