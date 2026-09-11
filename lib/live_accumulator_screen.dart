@@ -195,7 +195,7 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
     final fixture = fixtureId != null ? fixtures[fixtureId] : null;
     final fixtureEvents = fixtureId != null ? (events[fixtureId] ?? []) : <ApiFootballEvent>[];
 
-    // Filter events to only goal and card events.
+    // Filter events to only goal and card events, newest first.
     final relevantEvents = fixtureEvents
         .where((e) => e.isGoal || e.isCard)
         .toList()
@@ -307,23 +307,14 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
                 ],
               ),
             ),
-          // Latest match events
+          // Latest match event only.
           if (relevantEvents.isNotEmpty) ...[
             const Divider(height: 1, color: Colors.black12),
             Padding(
               padding: const EdgeInsets.all(10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final event in relevantEvents.take(5))
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Text(
-                        event.displayText,
-                        style: const TextStyle(fontSize: 11, color: Colors.black87),
-                      ),
-                    ),
-                ],
+              child: Text(
+                relevantEvents.first.displayText,
+                style: const TextStyle(fontSize: 11, color: Colors.black87),
               ),
             ),
           ],

@@ -64,26 +64,33 @@ function isCurrentlyWinning(leg, homeGoals, awayGoals, homeTeam, awayTeam) {
     return isYes ? (homeGoals > 0 && awayGoals > 0) : !(homeGoals > 0 && awayGoals > 0);
   }
 
-  if (betType.includes('over') || betType.includes('under') || betType.includes('goals')) {
-    // Team Totals also matches this betType check, so route it separately
-    // where team-side matters.
-    if (betType.includes('teamtotals')) {
-      const valueStr = pick ?? desc;
-      const lineMatch = valueStr.match(/(\d+\.?\d*)/);
-      if (!lineMatch) return false;
-      const line = parseFloat(lineMatch[1]);
-      let isHome;
-      if (leg.marketName) {
-        isHome = market.includes('home');
-      } else {
-        // Legacy fallback — same collision bug as match winner above.
-        isHome = desc.includes('home') || desc.includes(homeTeam.toLowerCase());
-      }
-      const teamGoals = isHome ? homeGoals : awayGoals;
-      if (valueStr.includes('over')) return teamGoals > line;
-      if (valueStr.includes('under')) return teamGoals < line;
-      return false;
+  // Team Totals ("Team Goals Over/Under") is routed here, before and
+  // separate from the generic Game Goals block below, because it also
+  // contains "over"/"under"/"goals" and would otherwise be scored
+  // against total match goals instead of one team's goals.
+  const isTeamTotals = leg.marketName
+    ? (market.includes('total - home') || market.includes('total - away'))
+    : betType.includes('teamgoals'); // legacy fallback for legs with no marketName
+
+  if (isTeamTotals) {
+    const valueStr = pick ?? desc;
+    const lineMatch = valueStr.match(/(\d+\.?\d*)/);
+    if (!lineMatch) return false;
+    const line = parseFloat(lineMatch[1]);
+    let isHome;
+    if (leg.marketName) {
+      isHome = market.includes('home');
+    } else {
+      // Legacy fallback — same collision bug as match winner above.
+      isHome = desc.includes('home') || desc.includes(homeTeam.toLowerCase());
     }
+    const teamGoals = isHome ? homeGoals : awayGoals;
+    if (valueStr.includes('over')) return teamGoals > line;
+    if (valueStr.includes('under')) return teamGoals < line;
+    return false;
+  }
+
+  if (betType.includes('over') || betType.includes('under') || betType.includes('goals')) {
     const valueStr = pick ?? desc;
     const lineMatch = valueStr.match(/(\d+\.?\d*)/);
     if (!lineMatch) return false;
@@ -234,7 +241,7 @@ exports.liveMatchPoller = onSchedule(
         .get();
       const allMemberIds = membersSnap.docs.map(d => d.id);
 
-      // ── 4a. Process new match events (goals + cards) ───────────────────
+      // ── 4a. Process new match events (goals, red cards, subs, VAR) ─────
       if (isLive) {
         const eventsData = await apiGet(`/fixtures/events?fixture=${fixtureId}`);
         const allEvents = eventsData.response ?? [];
@@ -244,18 +251,92 @@ exports.liveMatchPoller = onSchedule(
           .get();
         const processedIds = new Set(processedSnap.docs.map(d => d.data().eventId));
 
+        // Own-leg members get goals, red cards, substitutions, and
+        // disallowed goals, all with full detail. Everyone else only
+        // gets notified for goals and disallowed goals, and only sees
+        // the updated score — not who scored or how.
+        const ownMemberIds = new Set(legsForFixture.map(l => l.memberId));
+
         for (const event of allEvents) {
-          const type = event.type;
-          if (!['Goal', 'Card'].includes(type)) continue;
+          const rawType = event.type; // 'Goal', 'Card', 'Subst', 'Var'
+          const detail = event.detail || '';
+
+          // Confirmed detail values per API-Football's docs:
+          //   Goal: Normal Goal, Own Goal, Penalty, Missed Penalty
+          //   Card: Yellow Card, Red card
+          //   Subst: Substitution [n]
+          //   Var: Goal cancelled, Penalty confirmed
+          // 'Missed Penalty' is filed under type Goal but is NOT a score
+          // — must be excluded or a missed penalty would wrongly fire a
+          // "Goal!" notification to the whole team.
+          // Own Goal: assumed event.team is the team that benefits on
+          // the scoreboard (not the scoring player's own team) — if that
+          // assumption is wrong, own goals would be credited to the
+          // wrong side in the notification text.
+          const isGoal = rawType === 'Goal' && detail !== 'Missed Penalty';
+          const isRedCard = rawType === 'Card' && detail.toLowerCase() === 'red card';
+          const isSubstitution = rawType === 'Subst';
+          const isDisallowedGoal = rawType === 'Var' && detail === 'Goal cancelled';
+          // 'Penalty confirmed' (the other Var detail) is deliberately
+          // left unhandled — it's a decision confirmation, not a scoring
+          // change, and wasn't asked for.
+
+          if (!isGoal && !isRedCard && !isSubstitution && !isDisallowedGoal) continue;
 
           const elapsed = event.time.elapsed;
           const extra = event.time.extra ?? 0;
-          const detail = event.detail;
-          const playerName = event.player?.name ?? '';
           const eventTeamId = event.team.id;
           const eventTeamName = event.team.name;
+          const timeLabel = extra > 0 ? `${elapsed}'+${extra}` : `${elapsed}'`;
+          const scoreLabel = `${homeTeam} ${homeGoals} – ${awayGoals} ${awayTeam}`;
 
-          const eventId = `${elapsed}_${extra}_${eventTeamId}_${type}_${detail.replace(/ /g, '_')}_${playerName.replace(/ /g, '_')}`;
+          let emoji;
+          let eventDetail;
+          let notifyEveryone;
+          let eventKeyPart;
+
+          if (isGoal) {
+            // 'Normal Goal' is simplified to just 'Goal' in the
+            // notification text; other goal types (Penalty, Own Goal)
+            // are left as-is since they're meaningfully different.
+            const displayDetail = detail === 'Normal Goal' ? 'Goal' : detail;
+            const playerName = event.player?.name ?? '';
+            const playerPart = playerName ? ` ${playerName}` : '';
+            emoji = '⚽';
+            eventDetail = `${timeLabel} ${emoji} ${eventTeamName}${playerPart} — ${displayDetail}`;
+            notifyEveryone = true;
+            eventKeyPart = `${detail.replace(/ /g, '_')}_${playerName.replace(/ /g, '_')}`;
+          } else if (isRedCard) {
+            const playerName = event.player?.name ?? '';
+            const playerPart = playerName ? ` ${playerName}` : '';
+            emoji = '🟥';
+            eventDetail = `${timeLabel} ${emoji} ${eventTeamName}${playerPart} — Red Card`;
+            notifyEveryone = false;
+            eventKeyPart = `${detail.replace(/ /g, '_')}_${playerName.replace(/ /g, '_')}`;
+          } else if (isSubstitution) {
+            // API-Football's convention — not independently verified —
+            // is that `player` is the one going OFF and `assist` is the
+            // one coming ON. Swap these if it reads backwards once you
+            // see a real substitution notification.
+            const playerOff = event.player?.name ?? 'Player';
+            const playerOn = event.assist?.name ?? 'Player';
+            emoji = '🔄';
+            eventDetail = `${timeLabel} ${emoji} ${eventTeamName} — ${playerOff} off, ${playerOn} on`;
+            notifyEveryone = false;
+            eventKeyPart = `${playerOff.replace(/ /g, '_')}_${playerOn.replace(/ /g, '_')}`;
+          } else {
+            // Disallowed goal — corrects a goal notification that may
+            // already have gone out, so it reaches the same audience a
+            // goal does: everyone, with own-leg members getting full detail.
+            const playerName = event.player?.name ?? '';
+            const playerPart = playerName ? ` ${playerName}` : '';
+            emoji = '🚫';
+            eventDetail = `${timeLabel} ${emoji} ${eventTeamName}${playerPart} — Goal Disallowed`;
+            notifyEveryone = true;
+            eventKeyPart = `${detail.replace(/ /g, '_')}_${playerName.replace(/ /g, '_')}`;
+          }
+
+          const eventId = `${elapsed}_${extra}_${eventTeamId}_${rawType}_${eventKeyPart}`;
           if (processedIds.has(eventId)) continue;
 
           // Record as processed.
@@ -263,31 +344,34 @@ exports.liveMatchPoller = onSchedule(
             apiFootballFixtureId: fixtureId,
             eventId,
             teamId,
-            type,
+            type: rawType,
             detail,
             elapsed,
             teamName: eventTeamName,
-            playerName: playerName || null,
+            playerName: event.player?.name ?? null,
             processedAt: new Date(),
           });
 
-          const emoji = type === 'Goal' ? '⚽' : detail.includes('Yellow') ? '🟨' : '🟥';
-          const timeLabel = extra > 0 ? `${elapsed}'+${extra}` : `${elapsed}'`;
-          const playerPart = playerName ? ` ${playerName}` : '';
-          const scoreLabel = `${homeTeam} ${homeGoals} – ${awayGoals} ${awayTeam}`;
-          const eventDetail = `${timeLabel} ${emoji} ${eventTeamName}${playerPart} — ${detail}`;
-
-          // Own leg members get full event detail; others get score only.
-          const ownMemberIds = new Set(legsForFixture.map(l => l.memberId));
-
-          for (const memberId of allMemberIds) {
-            await sendNotification({
-              teamId,
-              recipientMemberId: memberId,
-              type: 'liveEvent',
-              title: `${emoji} ${scoreLabel}`,
-              body: ownMemberIds.has(memberId) ? eventDetail : scoreLabel,
-            });
+          if (notifyEveryone) {
+            for (const memberId of allMemberIds) {
+              await sendNotification({
+                teamId,
+                recipientMemberId: memberId,
+                type: 'liveEvent',
+                title: `${emoji} ${scoreLabel}`,
+                body: ownMemberIds.has(memberId) ? eventDetail : scoreLabel,
+              });
+            }
+          } else {
+            for (const memberId of ownMemberIds) {
+              await sendNotification({
+                teamId,
+                recipientMemberId: memberId,
+                type: 'liveEvent',
+                title: `${emoji} ${scoreLabel}`,
+                body: eventDetail,
+              });
+            }
           }
         }
       }
