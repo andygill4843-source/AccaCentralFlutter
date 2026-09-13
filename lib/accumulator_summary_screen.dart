@@ -8,7 +8,6 @@ import 'odds_format.dart';
 import 'odds_orchestrator.dart';
 import 'api_football_service.dart';
 import 'odds_api_service.dart';
-
 /// Converts an API bookmaker key to a human-readable display name.
 String _bookmakerDisplayName(String key) =>
     OddsApiService.bookmakerDisplayNames[key] ?? key;
@@ -34,14 +33,19 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
   Map<String, String> memberNames = {};
   bool isRejecting = false;
   bool isRefreshing = false;
-    static const Map<String, String> _bookmakerHomepages = {
-    'Bet365': 'https://www.bet365.com',
-    'William Hill': 'https://sports.williamhill.com',
-    'Sky Bet': 'https://www.skybet.com',
-    'Paddy Power': 'https://www.paddypower.com',
-    'Betfair': 'https://betfair.com',
-    'Ladbrokes': 'https://ladbrokes.com',
-    'Coral': 'https://www.coral.co.uk',
+  // Keyed by the canonical lowercase Odds API bookmaker key — consistent
+  // with bookmaker/bookmakerPrices/selectedBookmaker everywhere else in
+  // the app. This used to be keyed by display name ('Bet365', 'Ladbrokes'
+  // etc.), which meant a lookup with the raw key (what's actually stored)
+  // never matched, silently breaking the "Transfer to bookmakers" button
+  // and homepage links.
+  static const Map<String, String> _bookmakerHomepages = {
+    'bet365': 'https://www.bet365.com',
+    'williamhill': 'https://sports.williamhill.com',
+    'skybet': 'https://www.skybet.com',
+    'paddypower': 'https://www.paddypower.com',
+    'ladbrokes_uk': 'https://ladbrokes.com',
+    'coral': 'https://www.coral.co.uk',
   };
   @override
   void initState() {
@@ -108,7 +112,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
       if (mounted) setState(() => isRefreshing = false);
     }
   }
-
   Future<void> transferToBookmakerHomepage() async {    final url = selectedBookmaker != null ? _bookmakerHomepages[selectedBookmaker] : null;
     if (url == null) return;
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
@@ -143,7 +146,6 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
   /// below still shows (and allows rejecting) every leg, primary or
   /// secondary.
   List<AccumulatorLeg> get primaryLegs => legs.where((l) => !l.isSecondaryTournamentLeg).toList();
-
   /// Only a bookmaker present on EVERY primary leg qualifies — you can't
   /// place one accumulator bet with a bookmaker missing a price on any leg
   /// of it.
@@ -347,7 +349,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   const Text('Selected bookmaker', style: TextStyle(fontSize: 12)),
-                                  Text(selectedBookmaker!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                  Text(_bookmakerDisplayName(selectedBookmaker!), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                                   if (combinedOdds != null) Text('Combined odds: ${decimalToFractional(combinedOdds!)}'),
                                 ],
                               ),

@@ -13,13 +13,6 @@ class SettlementEngine {
     final awayGoals = fixture.awayGoals ?? 0;
     final totalGoals = homeGoals + awayGoals;
     final desc = leg.selectionDescription.toLowerCase().trim();
-    // Preferred: the raw pick value stored at submission time. Falls back
-    // to legacy description-parsing only for legs submitted before this
-    // field existed. The old parsing checked whether selectionDescription
-    // contained a team's name — but selectionDescription always contains
-    // BOTH team names ("Pick — Home vs Away"), so that check could never
-    // correctly distinguish a home pick from an away one. pickValue/
-    // marketName avoid that collision entirely.
     final pick = leg.pickValue?.toLowerCase().trim();
     final market = leg.marketName?.toLowerCase() ?? '';
 
@@ -31,8 +24,6 @@ class SettlementEngine {
           if (pick == 'draw') return homeGoals == awayGoals;
           return false;
         }
-        // Legacy fallback — best-effort only, has the home-first collision
-        // bug described above. Only reached for legs with no pickValue.
         if (desc.contains(fixture.homeTeam.toLowerCase()) ||
             desc == 'home' || desc.contains('home win')) {
           return homeGoals > awayGoals;
@@ -68,15 +59,10 @@ class SettlementEngine {
         final valueStr = pick ?? desc;
         final line = _extractLine(valueStr);
         if (line == null) return false;
-        // Which team the total applies to comes from the market
-        // ("Total - Home" / "Total - Away"), stored at submission —
-        // not from selectionDescription, which always contains the
-        // home team's name regardless of which side was picked.
         final bool isHome;
         if (leg.marketName != null) {
           isHome = market.contains('home');
         } else {
-          // Legacy fallback — has the same collision bug as above.
           isHome = desc.contains('home') ||
               desc.contains(fixture.homeTeam.toLowerCase());
         }
@@ -86,7 +72,6 @@ class SettlementEngine {
         return false;
 
       case BetType.correctScore:
-        // e.g. "2 - 1" or "2-1"
         final valueStr = pick ?? desc;
         final scoreMatch = RegExp(r'(\d+)\s*[-–]\s*(\d+)').firstMatch(valueStr);
         if (scoreMatch == null) return false;
@@ -113,7 +98,6 @@ class SettlementEngine {
           if (pick == 'away') return awayGoals > homeGoals;
           return false;
         }
-        // Legacy fallback — same collision bug as matchWinner above.
         if (desc.contains(fixture.homeTeam.toLowerCase()) || desc.contains('home')) {
           return homeGoals > awayGoals;
         }
@@ -122,13 +106,23 @@ class SettlementEngine {
         }
         return false;
 
+      // BTTS & Goals combo bets — BOTH halves must be true for a win.
+      // The combo market is always fixed at the 2.5 line (see the
+      // alternate_totals extraction in odds_orchestrator.dart, which
+      // only ever pulls the 2.5 line for these), so no line-parsing is
+      // needed here, unlike overUnderGoals/teamTotals above.
+      case BetType.bttsYesOverCombo:
+        return (homeGoals > 0 && awayGoals > 0) && (totalGoals > 2.5);
+      case BetType.bttsYesUnderCombo:
+        return (homeGoals > 0 && awayGoals > 0) && (totalGoals < 2.5);
+      case BetType.bttsNoOverCombo:
+        return !(homeGoals > 0 && awayGoals > 0) && (totalGoals > 2.5);
+      case BetType.bttsNoUnderCombo:
+        return !(homeGoals > 0 && awayGoals > 0) && (totalGoals < 2.5);
+
       case BetType.halfTimeFullTime:
       case BetType.anytimeScorer:
       case BetType.handicap:
-      case BetType.bttsYesOverCombo:
-      case BetType.bttsYesUnderCombo:
-      case BetType.bttsNoOverCombo:
-      case BetType.bttsNoUnderCombo:
       case BetType.other:
         // Cannot determine in-play result from score alone.
         return false;

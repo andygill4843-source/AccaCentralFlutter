@@ -29,13 +29,6 @@ function isCurrentlyWinning(leg, homeGoals, awayGoals, homeTeam, awayTeam) {
   const totalGoals = homeGoals + awayGoals;
   const desc = (leg.selectionDescription || '').toLowerCase().trim();
   const betType = (leg.betType || '').toLowerCase().replace(/\s/g, '');
-  // Preferred: the raw pick value stored at submission time. Falls back
-  // to legacy description-parsing only for legs submitted before this
-  // field existed. The old parsing checked whether selectionDescription
-  // contained a team's name — but selectionDescription always contains
-  // BOTH team names ("Pick — Home vs Away"), so that check could never
-  // correctly distinguish a home pick from an away one. pickValue/
-  // marketName avoid that collision entirely.
   const pick = leg.pickValue ? String(leg.pickValue).toLowerCase().trim() : null;
   const market = (leg.marketName || '').toLowerCase();
 
@@ -46,8 +39,6 @@ function isCurrentlyWinning(leg, homeGoals, awayGoals, homeTeam, awayTeam) {
       if (pick === 'draw') return homeGoals === awayGoals;
       return false;
     }
-    // Legacy fallback — best-effort only, has the home-first collision
-    // bug described above. Only reached for legs with no pickValue.
     if (desc.includes(homeTeam.toLowerCase()) || desc === 'home' || desc.includes('home win')) {
       return homeGoals > awayGoals;
     }
@@ -58,19 +49,43 @@ function isCurrentlyWinning(leg, homeGoals, awayGoals, homeTeam, awayTeam) {
     return false;
   }
 
+  // BTTS & Goals combo bets — BOTH halves must be true for a win. Checked
+  // here, before the plain BTTS check and before the generic over/under
+  // block below, because the combo's stored betType string (e.g. "BTTS &
+  // Over 2.5 (Estimate)") contains "over"/"under" as a substring and was
+  // previously falling straight into the generic block, which only
+  // checked total goals and silently ignored the BTTS half entirely —
+  // the actual cause of combo legs settling as a win off goals alone.
+  // The combo market is always fixed at the 2.5 line, so no line-parsing
+  // is needed here.
+  const isBttsCombo = betType.includes('btts');
+  if (isBttsCombo) {
+    let bttsYes, isOver;
+    if (pick !== null) {
+      // pickValue looks like "BTTS Yes & Over 2.5" / "BTTS No & Under 2.5"
+      bttsYes = pick.includes('yes');
+      isOver = pick.includes('over');
+    } else {
+      // Legacy fallback — reconstruct from the stored betType display
+      // name. 'No BTTS & Over 2.5 (Estimate)' normalises to
+      // 'nobtts&over2.5(estimate)'; the Yes variant has no 'no' prefix.
+      bttsYes = !betType.includes('nobtts');
+      isOver = betType.includes('over');
+    }
+    const bttsCondition = bttsYes ? (homeGoals > 0 && awayGoals > 0) : !(homeGoals > 0 && awayGoals > 0);
+    const totalsCondition = isOver ? totalGoals > 2.5 : totalGoals < 2.5;
+    return bttsCondition && totalsCondition;
+  }
+
   if (betType.includes('bothteams') || betType === 'btts') {
     const valueStr = pick ?? desc;
     const isYes = valueStr.includes('yes');
     return isYes ? (homeGoals > 0 && awayGoals > 0) : !(homeGoals > 0 && awayGoals > 0);
   }
 
-  // Team Totals ("Team Goals Over/Under") is routed here, before and
-  // separate from the generic Game Goals block below, because it also
-  // contains "over"/"under"/"goals" and would otherwise be scored
-  // against total match goals instead of one team's goals.
   const isTeamTotals = leg.marketName
     ? (market.includes('total - home') || market.includes('total - away'))
-    : betType.includes('teamgoals'); // legacy fallback for legs with no marketName
+    : betType.includes('teamgoals');
 
   if (isTeamTotals) {
     const valueStr = pick ?? desc;
@@ -81,7 +96,6 @@ function isCurrentlyWinning(leg, homeGoals, awayGoals, homeTeam, awayTeam) {
     if (leg.marketName) {
       isHome = market.includes('home');
     } else {
-      // Legacy fallback — same collision bug as match winner above.
       isHome = desc.includes('home') || desc.includes(homeTeam.toLowerCase());
     }
     const teamGoals = isHome ? homeGoals : awayGoals;
@@ -121,7 +135,6 @@ function isCurrentlyWinning(leg, homeGoals, awayGoals, homeTeam, awayTeam) {
       if (pick === 'away') return awayGoals > homeGoals;
       return false;
     }
-    // Legacy fallback — same collision bug as match winner above.
     if (desc.includes(homeTeam.toLowerCase()) || desc.includes('home')) return homeGoals > awayGoals;
     if (desc.includes(awayTeam.toLowerCase()) || desc.includes('away')) return awayGoals > homeGoals;
     return false;
@@ -136,14 +149,14 @@ async function apiGet(path) {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: { 'x-apisports-key': API_KEY },
   });
-  if (!res.ok) throw new Error(`API Football ${path} → ${res.status}`);
+  if (!res.ok) throw new Error(`API Football ${path} → HTTP ${res.status}`);
   return res.json();
 }
 
 async function sendNotification({ teamId, recipientMemberId, type, title, body }) {
   await db.collection('notifications').add({
     teamId,
-    recipientMemberId, // singular — matches the push trigger in index.js
+    recipientMemberId,
     type,
     title,
     body,
@@ -165,14 +178,12 @@ exports.liveMatchPoller = onSchedule(
     const now = Date.now();
     const thirtyMinMs = 30 * 60 * 1000;
 
-    // ── 1. Fetch pending legs ──────────────────────────────────────────────
     const legsSnap = await db.collection('legs')
       .where('outcome', '==', 'pending')
       .get();
 
     if (legsSnap.empty) return;
 
-    // Filter to legs within their polling window that have an API Football ID.
     const activeLegDocs = legsSnap.docs.filter(doc => {
       const leg = doc.data();
       if (!leg.apiFootballFixtureId) return false;
@@ -183,7 +194,6 @@ exports.liveMatchPoller = onSchedule(
 
     if (activeLegDocs.length === 0) return;
 
-    // ── 2. Deduplicate by fixture ───────────────────────────────────────────
     const fixtureToLegs = {};
 
     for (const doc of activeLegDocs) {
@@ -196,16 +206,6 @@ exports.liveMatchPoller = onSchedule(
     const fixtureIds = Object.keys(fixtureToLegs).map(Number);
     if (fixtureIds.length === 0) return;
 
-    // ── 3. Fetch current status for exactly these fixtures ─────────────────
-    // Using /fixtures?ids=... instead of /fixtures?live=... because the
-    // live= endpoint only returns matches currently in progress — a
-    // finished match (FT/AET/PEN) drops out of that response the moment
-    // it ends, making settlement unreachable. ids= returns the fixture's
-    // current status regardless of whether it's live, finished, or not
-    // yet started, so both event-processing and settlement work off the
-    // same reliable source. Batched at 20 IDs per call (API-Football's
-    // documented cap for this parameter — verify against current docs
-    // if this starts erroring).
     const BATCH_SIZE = 20;
     const liveById = {};
 
@@ -217,7 +217,6 @@ exports.liveMatchPoller = onSchedule(
       }
     }
 
-    // ── 4. Process each fixture ────────────────────────────────────────────
     for (const [fixtureIdStr, legsForFixture] of Object.entries(fixtureToLegs)) {
       const fixtureId = parseInt(fixtureIdStr);
       const liveFixture = liveById[fixtureId];
@@ -235,13 +234,11 @@ exports.liveMatchPoller = onSchedule(
       const teamId = legsForFixture[0].teamId;
       const gameWeekId = legsForFixture[0].gameWeekId;
 
-      // Fetch all members for this team.
       const membersSnap = await db.collection('members')
         .where('teamId', '==', teamId)
         .get();
       const allMemberIds = membersSnap.docs.map(d => d.id);
 
-      // ── 4a. Process new match events (goals, red cards, subs, VAR) ─────
       if (isLive) {
         const eventsData = await apiGet(`/fixtures/events?fixture=${fixtureId}`);
         const allEvents = eventsData.response ?? [];
@@ -251,35 +248,16 @@ exports.liveMatchPoller = onSchedule(
           .get();
         const processedIds = new Set(processedSnap.docs.map(d => d.data().eventId));
 
-        // Own-leg members get goals, red cards, substitutions, and
-        // disallowed goals, all with full detail. Everyone else only
-        // gets notified for goals and disallowed goals, and only sees
-        // the updated score — not who scored or how.
         const ownMemberIds = new Set(legsForFixture.map(l => l.memberId));
 
         for (const event of allEvents) {
-          const rawType = event.type; // 'Goal', 'Card', 'Subst', 'Var'
+          const rawType = event.type;
           const detail = event.detail || '';
 
-          // Confirmed detail values per API-Football's docs:
-          //   Goal: Normal Goal, Own Goal, Penalty, Missed Penalty
-          //   Card: Yellow Card, Red card
-          //   Subst: Substitution [n]
-          //   Var: Goal cancelled, Penalty confirmed
-          // 'Missed Penalty' is filed under type Goal but is NOT a score
-          // — must be excluded or a missed penalty would wrongly fire a
-          // "Goal!" notification to the whole team.
-          // Own Goal: assumed event.team is the team that benefits on
-          // the scoreboard (not the scoring player's own team) — if that
-          // assumption is wrong, own goals would be credited to the
-          // wrong side in the notification text.
           const isGoal = rawType === 'Goal' && detail !== 'Missed Penalty';
           const isRedCard = rawType === 'Card' && detail.toLowerCase() === 'red card';
           const isSubstitution = rawType === 'Subst';
           const isDisallowedGoal = rawType === 'Var' && detail === 'Goal cancelled';
-          // 'Penalty confirmed' (the other Var detail) is deliberately
-          // left unhandled — it's a decision confirmation, not a scoring
-          // change, and wasn't asked for.
 
           if (!isGoal && !isRedCard && !isSubstitution && !isDisallowedGoal) continue;
 
@@ -296,9 +274,6 @@ exports.liveMatchPoller = onSchedule(
           let eventKeyPart;
 
           if (isGoal) {
-            // 'Normal Goal' is simplified to just 'Goal' in the
-            // notification text; other goal types (Penalty, Own Goal)
-            // are left as-is since they're meaningfully different.
             const displayDetail = detail === 'Normal Goal' ? 'Goal' : detail;
             const playerName = event.player?.name ?? '';
             const playerPart = playerName ? ` ${playerName}` : '';
@@ -314,10 +289,6 @@ exports.liveMatchPoller = onSchedule(
             notifyEveryone = false;
             eventKeyPart = `${detail.replace(/ /g, '_')}_${playerName.replace(/ /g, '_')}`;
           } else if (isSubstitution) {
-            // API-Football's convention — not independently verified —
-            // is that `player` is the one going OFF and `assist` is the
-            // one coming ON. Swap these if it reads backwards once you
-            // see a real substitution notification.
             const playerOff = event.player?.name ?? 'Player';
             const playerOn = event.assist?.name ?? 'Player';
             emoji = '🔄';
@@ -325,9 +296,6 @@ exports.liveMatchPoller = onSchedule(
             notifyEveryone = false;
             eventKeyPart = `${playerOff.replace(/ /g, '_')}_${playerOn.replace(/ /g, '_')}`;
           } else {
-            // Disallowed goal — corrects a goal notification that may
-            // already have gone out, so it reaches the same audience a
-            // goal does: everyone, with own-leg members getting full detail.
             const playerName = event.player?.name ?? '';
             const playerPart = playerName ? ` ${playerName}` : '';
             emoji = '🚫';
@@ -339,7 +307,6 @@ exports.liveMatchPoller = onSchedule(
           const eventId = `${elapsed}_${extra}_${eventTeamId}_${rawType}_${eventKeyPart}`;
           if (processedIds.has(eventId)) continue;
 
-          // Record as processed.
           await db.collection('liveMatchEvents').add({
             apiFootballFixtureId: fixtureId,
             eventId,
@@ -376,9 +343,7 @@ exports.liveMatchPoller = onSchedule(
         }
       }
 
-      // ── 4b. Settle legs when the match is finished ─────────────────────
       if (isFinished) {
-        // Get total primary leg count for X/Y display.
         const allGameWeekLegsSnap = await db.collection('legs')
           .where('gameWeekId', '==', gameWeekId)
           .where('teamId', '==', teamId)
@@ -397,7 +362,6 @@ exports.liveMatchPoller = onSchedule(
           await db.collection('legs').doc(leg.id).update({ outcome: newOutcome });
           settledCount++;
 
-          // Look up the member's display name.
           const memberDoc = membersSnap.docs.find(d => d.id === leg.memberId);
           const memberName = memberDoc?.data()?.displayName ?? 'Someone';
 

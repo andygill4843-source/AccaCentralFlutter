@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'scoring_engine.dart'; // for LeagueTableEntry
 import 'tournament_bracket_engine.dart';
 import 'odds_format.dart';
+import 'odds_api_service.dart';
 
 class FirestoreService {
   static final FirestoreService instance = FirestoreService._();
@@ -1184,7 +1185,7 @@ class FirestoreService {
       recipientMemberIds: [for (final m in members) if (m.id != null) m.id!],
       type: NotificationType.gameweekLocked,
       title: '🔐 Gameweek locked 🔐',
-      body: 'Gameweek $weekNumber is locked in with $bookmaker — combined odds ${decimalToFractional(combinedOdds)}.'
+      body: 'Gameweek $weekNumber is locked in with ${OddsApiService.bookmakerDisplayNames[bookmaker] ?? bookmaker} — combined odds ${decimalToFractional(combinedOdds)}.'
     );
     await resolveTournamentWalkovers(teamId: teamId, gameWeekId: gameWeekId);
   }

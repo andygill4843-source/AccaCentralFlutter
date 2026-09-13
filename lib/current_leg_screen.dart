@@ -4,7 +4,7 @@ import 'models.dart';
 import 'submit_leg_screen.dart';
 import 'main.dart'; // for AccaColors
 import 'odds_format.dart';
-
+import 'odds_orchestrator.dart';
 class CurrentLegScreen extends StatefulWidget {
   final AccumulatorLeg leg;
   final String gameWeekId;
@@ -12,7 +12,6 @@ class CurrentLegScreen extends StatefulWidget {
   final String teamId;
   final DateTime windowStart;
   final DateTime windowEnd;
-
   const CurrentLegScreen({
     super.key,
     required this.leg,
@@ -22,22 +21,17 @@ class CurrentLegScreen extends StatefulWidget {
     required this.windowStart,
     required this.windowEnd,
   });
-
   @override
   State<CurrentLegScreen> createState() => _CurrentLegScreenState();
 }
-
 class _CurrentLegScreenState extends State<CurrentLegScreen> {
   bool isRevising = false;
-
   String? errorMessage;
-
   Future<void> reviseSelection() async {
     setState(() {
       isRevising = true;
       errorMessage = null;
     });
-
     final submitted = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => SubmitLegScreen(
@@ -49,13 +43,11 @@ class _CurrentLegScreenState extends State<CurrentLegScreen> {
         ),
       ),
     );
-
     if (submitted == true) {
       try {
         if (widget.leg.id != null) {
           await FirestoreService.instance.deleteLeg(widget.leg.id!);
         }
-
         // Fetch the newly submitted leg and land on ITS view, instead of
         // popping all the way back to the League table.
         final newLeg = await FirestoreService.instance.fetchMemberLegForGameWeek(
@@ -63,7 +55,6 @@ class _CurrentLegScreenState extends State<CurrentLegScreen> {
           memberId: widget.memberId,
           gameWeekId: widget.gameWeekId,
         );
-
         if (mounted && newLeg != null) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
@@ -92,10 +83,8 @@ class _CurrentLegScreenState extends State<CurrentLegScreen> {
       }
       return;
     }
-
     if (mounted) setState(() => isRevising = false);
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -129,7 +118,7 @@ class _CurrentLegScreenState extends State<CurrentLegScreen> {
                     Text(widget.leg.selectionDescription, style: TextStyle(fontSize: 13, color: AccaColors.textSecondary)),
                     const SizedBox(height: 8),
                     Text(
-                      '${decimalToFractional(widget.leg.decimalOddsAtSelection)} — ${widget.leg.bookmaker}',
+                      '${decimalToFractional(widget.leg.decimalOddsAtSelection)} — ${OddsOrchestrator.bookmakerDisplayName(widget.leg.bookmaker)}',
                       style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                     ),
                   ],
