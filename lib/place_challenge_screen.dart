@@ -74,7 +74,7 @@ class _PlaceChallengeScreenState extends State<PlaceChallengeScreen> {
       challengerLegId: widget.challengerLeg?.id,
       challengerLegDescription: widget.challengerLeg?.selectionDescription,
       challengerLegOdds: widget.challengerLeg?.decimalOddsAtSelection,
-      status: ChallengeStatus.active,
+      status: ChallengeStatus.pendingAcceptance,
       createdAt: DateTime.now(),
     );
 
@@ -112,6 +112,11 @@ class _PlaceChallengeScreenState extends State<PlaceChallengeScreen> {
               'If this leg loses, you get its hypothetical win value added to your score. If it wins, they get your own leg\'s hypothetical win value instead — win or lose your own bet.',
               style: TextStyle(color: Colors.white70, fontSize: 13),
             ),
+            const SizedBox(height: 12),
+            Text(
+              '${widget.challengedMemberName} will need to accept before it\'s live. If they don\'t respond before kickoff, it\'s counted as accepted automatically. If they decline, this challenge attempt is still used up for the gameweek.',
+              style: const TextStyle(color: Colors.white70, fontSize: 13, fontStyle: FontStyle.italic),
+            ),
             const SizedBox(height: 16),
             Text('Challenges remaining: ${widget.challengesRemaining}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
             if (errorMessage != null) ...[
@@ -124,7 +129,7 @@ class _PlaceChallengeScreenState extends State<PlaceChallengeScreen> {
               style: ElevatedButton.styleFrom(backgroundColor: AccaColors.gold, foregroundColor: Colors.black),
               child: isSubmitting
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Confirm Challenge', style: TextStyle(fontWeight: FontWeight.bold)),
+                  : const Text('Send Challenge', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ],
         ),

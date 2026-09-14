@@ -19,7 +19,6 @@ class _ChallengesScreenState extends State<ChallengesScreen> {
   bool isLoading = true;
   String? errorMessage;
   int maxChallenges = 2;
-  // Resizable column widths for both tables.
   final Map<String, double> _statsColWidths = {
     'Remaining': 80, 'Placed': 70, 'Won': 60, 'Lost': 60, 'Win %': 70,
   };
@@ -107,12 +106,30 @@ class _ChallengesScreenState extends State<ChallengesScreen> {
     return sorted;
   }
   String _outcomeLabel(Challenge c) {
-    if (c.status != ChallengeStatus.resolved || c.challengerWon == null) return 'Pending';
-    return c.challengerWon! ? 'Challenger Won' : 'Challenger Lost';
+    switch (c.status) {
+      case ChallengeStatus.pendingAcceptance:
+        return 'Awaiting response';
+      case ChallengeStatus.declined:
+        return 'Declined';
+      case ChallengeStatus.active:
+        return 'In progress';
+      case ChallengeStatus.resolved:
+        if (c.challengerWon == null) return 'Pending';
+        return c.challengerWon! ? 'Challenger Won' : 'Challenger Lost';
+    }
   }
   Color _outcomeColor(Challenge c) {
-    if (c.status != ChallengeStatus.resolved || c.challengerWon == null) return AccaColors.textSecondary;
-    return c.challengerWon! ? AccaColors.win : AccaColors.loss;
+    switch (c.status) {
+      case ChallengeStatus.pendingAcceptance:
+        return AccaColors.gold;
+      case ChallengeStatus.declined:
+        return AccaColors.loss;
+      case ChallengeStatus.active:
+        return AccaColors.textSecondary;
+      case ChallengeStatus.resolved:
+        if (c.challengerWon == null) return AccaColors.textSecondary;
+        return c.challengerWon! ? AccaColors.win : AccaColors.loss;
+    }
   }
   String _formatDateOnly(DateTime dt) => '${dt.day}/${dt.month}/${dt.year}';
   static const _rowHeight = 32.0;

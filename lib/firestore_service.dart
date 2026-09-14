@@ -2,10 +2,10 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'models.dart';
 import 'package:uuid/uuid.dart';
-import 'scoring_engine.dart'; // for LeagueTableEntry
+import 'scoring_engine.dart';
 import 'tournament_bracket_engine.dart';
-import 'odds_format.dart';
 import 'odds_api_service.dart';
+import 'odds_format.dart';
 
 class FirestoreService {
   static final FirestoreService instance = FirestoreService._();
@@ -21,9 +21,6 @@ class FirestoreService {
     return snapshot.docs.map((doc) => Member.fromMap(doc.id, doc.data())).toList();
   }
 
-  /// Firestore doc IDs can't contain '/', but season strings like "2026/27"
-  /// do — replace it with a safe separator so the ID stays valid and
-  /// fetch/create always agree on the same doc.
   String _seasonSettingsDocId(String teamId, String season) {
     return '${teamId}_${season.replaceAll('/', '-')}';
   }
@@ -35,7 +32,7 @@ class FirestoreService {
   }
 
   Future<void> updateMemberDisplayName({required String memberDocId, required String newDisplayName}) async {
-  await _db.collection('members').doc(memberDocId).update({'displayName': newDisplayName});
+    await _db.collection('members').doc(memberDocId).update({'displayName': newDisplayName});
   }
 
   Future<void> updateGameWeekDeadline({required String gameWeekId, required DateTime newDeadline}) async {
@@ -62,8 +59,6 @@ class FirestoreService {
     return snapshot.docs.map((doc) => PhysioSession.fromMap(doc.id, doc.data())).toList();
   }
 
-  /// Whether [memberId] has an active (unconsumed by a leg yet, or already
-  /// applied) physio booking for this specific gameweek.
   Future<bool> hasPhysioProtectionPending({required String teamId, required String memberId, required String gameWeekId}) async {
     final snapshot = await _db
         .collection('physioSessions')
@@ -75,10 +70,6 @@ class FirestoreService {
     return snapshot.docs.isNotEmpty;
   }
 
-  /// Books a physio session for [memberId] on [gameWeek]. If they've already
-  /// submitted a leg for this gameweek, that leg is protected immediately;
-  /// otherwise protection is picked up automatically whenever they do submit
-  /// (see PickOutcomeScreen.submit()/submitCombo()).
   Future<void> bookPhysioSession({
     required String teamId,
     required String memberId,
@@ -145,14 +136,63 @@ class FirestoreService {
     );
   }
 
+  /// Member responds to a challenge placed against their leg — accept
+  /// activates it ("game on"), decline ends it there permanently. Either
+  /// way this uses up the challenger's attempt for the gameweek — a
+  /// decline is not a free pass for them to try someone else instead.
+  Future<void> respondToChallenge({
+    required String challengeId,
+    required bool accept,
+  }) async {
+    final doc = await _db.collection('challenges').doc(challengeId).get();
+    if (!doc.exists) return;
+    final challenge = Challenge.fromMap(doc.id, doc.data()!);
+
+    await _db.collection('challenges').doc(challengeId).update({
+      'status': accept ? ChallengeStatus.active.value : ChallengeStatus.declined.value,
+    });
+
+    final members = await fetchMembers(challenge.teamId);
+    final memberIds = [for (final m in members) if (m.id != null) m.id!];
+
+    if (accept) {
+      await sendNotification(
+        teamId: challenge.teamId,
+        recipientMemberIds: memberIds,
+        type: NotificationType.challengeAccepted,
+        title: '💪 Challenge accepted 😱',
+        body: '${challenge.challengedName} accepts the challenge from ${challenge.challengerName} 😱. Game on!',
+      );
+    } else {
+      await sendNotification(
+        teamId: challenge.teamId,
+        recipientMemberIds: memberIds,
+        type: NotificationType.challengeDeclined,
+        title: '😢 Challenge declined 🙈',
+        body: "${challenge.challengedName} doesn't fancy it. ${challenge.challengerName}'s challenge rejected! 🙈",
+      );
+    }
+  }
+
+  /// Challenges awaiting this member's accept/reject decision — surfaced
+  /// as a popup whenever they open the app.
+  Future<List<Challenge>> fetchPendingAcceptanceChallengesForMember({
+    required String teamId,
+    required String memberId,
+  }) async {
+    final snapshot = await _db
+        .collection('challenges')
+        .where('teamId', isEqualTo: teamId)
+        .where('challengedMemberId', isEqualTo: memberId)
+        .where('status', isEqualTo: ChallengeStatus.pendingAcceptance.value)
+        .get();
+    return snapshot.docs.map((d) => Challenge.fromMap(d.id, d.data())).toList();
+  }
+
   // ============================================================
   // KNOCKOUT TOURNAMENT
   // ============================================================
 
-  /// Creates the season's tournament and notifies every current member of
-  /// the draw date/time. Bracket size isn't known yet (member count can
-  /// still change before the draw actually happens) — that gets computed
-  /// and stored separately once the manager triggers the draw.
   Future<void> createTournament(Tournament tournament) async {
     await _db.collection('tournaments').add(tournament.toMap());
     final members = await fetchMembers(tournament.teamId);
@@ -179,14 +219,6 @@ class FirestoreService {
     return Tournament.fromMap(snapshot.docs.first.id, snapshot.docs.first.data());
   }
 
-  /// Live league-table position (1-indexed) per memberId, at the moment
-  /// this is called — used for big-cup-tie detection at each round's draw.
-  /// NOTE: once secondary tournament legs exist (a later stage), this must
-  /// exclude them from scoring — only the primary leg counts toward the
-  /// main league table. ScoringEngine.buildLeagueTable doesn't yet
-  /// distinguish primary/secondary legs; revisit this once that stage
-  /// actually introduces secondary legs, since right now none exist to
-  /// double-count.
   Future<Map<String, int>> _leagueTablePositions({required String teamId, required String season}) async {
     final members = await fetchMembers(teamId);
     final allLegs = await fetchLegs(teamId);
@@ -221,10 +253,6 @@ class FirestoreService {
     return snapshot.docs.map((d) => TournamentMatch.fromMap(d.id, d.data())).toList();
   }
 
-  /// The manager's "draw" for a brand-new tournament with no rounds yet.
-  /// Splits the current membership into byes + a preliminary round (or
-  /// straight into the main bracket if the count is already a power of 2).
-  /// Every member currently on the team is a participant.
   Future<void> drawInitialTournamentRound(Tournament tournament) async {
     if (tournament.id == null) throw Exception('Tournament has no id.');
     final existing = await fetchTournamentMatches(teamId: tournament.teamId, tournamentId: tournament.id!);
@@ -258,9 +286,6 @@ class FirestoreService {
     await batch.commit();
   }
 
-  /// Draws the next round once every match in the current round has a
-  /// winnerMemberId set. Throws if that gate isn't met, or if the current
-  /// round was already the Final (tournament is complete at that point).
   Future<void> drawNextTournamentRound(Tournament tournament) async {
     if (tournament.id == null || tournament.currentRoundSize == null) {
       throw Exception('This tournament has not had its first draw yet.');
@@ -313,10 +338,6 @@ class FirestoreService {
     await batch.commit();
   }
 
-  /// Whether every match in the tournament's current round has a winner —
-  /// used to gate the "Draw Next Round" button. False (not thrown) if
-  /// there's no current round or no matches at all, so it's safe to use
-  /// directly for UI enable/disable state.
   Future<bool> isCurrentTournamentRoundFullySettled(Tournament tournament) async {
     if (tournament.id == null || tournament.currentRoundSize == null) return false;
     final matches = await fetchTournamentMatchesForRound(
@@ -340,7 +361,7 @@ class FirestoreService {
   }
 
   Future<void> _notifyTournamentMatchDrawn(TournamentMatch match) async {
-    if (match.isBye || match.memberBId == null) return; // nothing to draw for a bye
+    if (match.isBye || match.memberBId == null) return;
     await sendNotification(
       teamId: match.teamId,
       recipientMemberIds: [match.memberAId, match.memberBId!],
@@ -370,8 +391,6 @@ class FirestoreService {
     );
   }
 
-  /// Reveals every not-yet-revealed match in the round at once, notifying
-  /// each pairing (and the whole team once done) as part of the same call.
   Future<void> revealAllTournamentMatches({
     required String tournamentId,
     required int roundSize,
@@ -394,15 +413,10 @@ class FirestoreService {
     await _notifyTournamentDrawCompleted(teamId: teamId, tournamentName: tournamentName);
   }
 
-  /// Sends the "draw is live" notice once, ahead of a one-by-one reveal —
-  /// call this before the first call to revealNextTournamentMatch.
   Future<void> notifyTournamentDrawStarting({required String teamId, required String tournamentName}) {
     return _notifyTournamentDrawLive(teamId: teamId, tournamentName: tournamentName);
   }
 
-  /// Reveals exactly one not-yet-revealed match, for the one-by-one reveal
-  /// flow. Returns true if there are more matches still waiting after this
-  /// one, so the caller knows whether to keep looping.
   Future<bool> revealNextTournamentMatch({
     required String tournamentId,
     required int roundSize,
@@ -424,10 +438,6 @@ class FirestoreService {
     return remaining > 0;
   }
 
-  /// Whether the tournament's current round has already been attached to
-  /// some gameweek (i.e. at least one match in it already has a
-  /// gameWeekId) — used to gate the "Part of tournament?" toggle in
-  /// gameweek setup to only rounds that haven't been assigned yet.
   Future<bool> isTournamentRoundAttached({
     required String teamId,
     required String tournamentId,
@@ -437,9 +447,6 @@ class FirestoreService {
     return matches.any((m) => m.gameWeekId != null);
   }
 
-  /// Attaches every match in the tournament's current round to
-  /// [gameWeekId] — the whole round plays out together in one gameweek,
-  /// not match-by-match.
   Future<void> attachTournamentRoundToGameWeek({
     required String teamId,
     required String tournamentId,
@@ -455,11 +462,6 @@ class FirestoreService {
     await batch.commit();
   }
 
-  /// The member's own unresolved, real (non-bye) TournamentMatch for
-  /// [gameWeekId], if this gameweek is tournament-linked and the member is
-  /// still active in the current round. Null means: not a tournament
-  /// round, the member isn't in it, or their match already has a winner —
-  /// any of which means they get the normal single-leg flow instead.
   Future<TournamentMatch?> fetchActiveTournamentMatchForGameWeek({
     required String teamId,
     required String gameWeekId,
@@ -478,10 +480,6 @@ class FirestoreService {
     return null;
   }
 
-  /// Flips which of a member's two tournament legs is primary vs
-  /// secondary. Both legs already exist as fully independent picks (own
-  /// fixture, odds, outcome) — swapping never re-fetches or re-picks
-  /// anything, it's purely a role change on the two existing documents.
   Future<void> swapPrimaryAndSecondaryLegs({
     required String primaryLegId,
     required String secondaryLegId,
@@ -494,27 +492,48 @@ class FirestoreService {
 
   /// Resolves any active challenge whose challenged leg has now settled
   /// (won/lost), same client-side-on-load pattern used for fine disputes.
+  /// Also auto-accepts any still-pending challenge once its challenged
+  /// leg's kickoff has passed — an un-answered challenge is assumed
+  /// accepted once the game starts, not silently dropped. That transition
+  /// is silent (no notification), since nobody took a deliberate action.
   Future<List<Challenge>> fetchChallenges({required String teamId, required String season}) async {
     final snapshot = await _db.collection('challenges').where('teamId', isEqualTo: teamId).where('season', isEqualTo: season).get();
     final all = snapshot.docs.map((doc) => Challenge.fromMap(doc.id, doc.data())).toList();
 
+    final legsSnapshot = await _db.collection('legs').where('teamId', isEqualTo: teamId).get();
+    final legsById = {for (final doc in legsSnapshot.docs) doc.id: doc.data()};
+
+    bool anyChanges = false;
+
+    for (final challenge in all.where((c) => c.status == ChallengeStatus.pendingAcceptance)) {
+      final legData = legsById[challenge.challengedLegId];
+      if (legData == null) continue;
+      final kickoff = (legData['kickoff'] as dynamic)?.toDate();
+      if (kickoff == null) continue;
+      if (DateTime.now().isAfter(kickoff)) {
+        await _db.collection('challenges').doc(challenge.id).update({
+          'status': ChallengeStatus.active.value,
+        });
+        anyChanges = true;
+      }
+    }
+
     final activeOnes = all.where((c) => c.status == ChallengeStatus.active).toList();
     if (activeOnes.isNotEmpty) {
-      final legsSnapshot = await _db.collection('legs').where('teamId', isEqualTo: teamId).get();
-      final legsById = {for (final doc in legsSnapshot.docs) doc.id: doc.data()};
       final teamMembers = await fetchMembers(teamId);
       final memberIds = [for (final m in teamMembers) if (m.id != null) m.id!];
       for (final challenge in activeOnes) {
         final legData = legsById[challenge.challengedLegId];
         if (legData == null) continue;
         final outcome = LegOutcomeValue.fromValue(legData['outcome']);
-        if (outcome != LegOutcome.won && outcome != LegOutcome.lost) continue; // not settled yet
+        if (outcome != LegOutcome.won && outcome != LegOutcome.lost) continue;
         final challengedLegWon = outcome == LegOutcome.won;
-        final challengerWon = !challengedLegWon; // challenger wins the challenge if the challenged leg LOST
+        final challengerWon = !challengedLegWon;
         await _db.collection('challenges').doc(challenge.id).update({
           'status': ChallengeStatus.resolved.value,
           'challengerWon': challengerWon,
         });
+        anyChanges = true;
         await sendNotification(
           teamId: teamId,
           recipientMemberIds: memberIds,
@@ -525,11 +544,12 @@ class FirestoreService {
               : 'That aged well! Too big for your boots ${challenge.challengerName}. Enjoy the points ${challenge.challengedName}.',
         );
       }
-      final refreshed = await _db.collection('challenges').where('teamId', isEqualTo: teamId).get();
-      return refreshed.docs.map((doc) => Challenge.fromMap(doc.id, doc.data())).toList();
     }
 
-    return all;
+    if (!anyChanges) return all;
+
+    final refreshed = await _db.collection('challenges').where('teamId', isEqualTo: teamId).where('season', isEqualTo: season).get();
+    return refreshed.docs.map((doc) => Challenge.fromMap(doc.id, doc.data())).toList();
   }
 
   Future<List<Team>> fetchTeams(List<String> teamIds) async {
@@ -541,9 +561,6 @@ class FirestoreService {
     return teams;
   }
 
-  /// Writes one notification doc per recipient — the Cloud Function
-  /// (notifications.js) picks each one up via onCreate and sends the
-  /// actual push. This call itself is what powers the in-app bell list.
   Future<void> sendNotification({
     required String teamId,
     required List<String> recipientMemberIds,
@@ -584,7 +601,7 @@ class FirestoreService {
   Future<void> saveFcmToken({required String userId, required String token}) async {
     await _db.collection('users').doc(userId).update({'fcmToken': token});
   }
- 
+
   Future<void> markFinePaid(String fineId) async {
     await _db.collection('fines').doc(fineId).update({
       'paid': true,
@@ -596,14 +613,6 @@ class FirestoreService {
     await _db.collection('legs').doc(legId).delete();
   }
 
-  /// Removes a member from the team. Concretely: removes their userId from
-  /// team.memberIds (the Firestore-level access check) and deletes their
-  /// member document. Historical data (legs, fines, etc.) is left intact —
-  /// it still shows in league history under their old display name.
-  /// Note: their AppUser document's teamIds list is NOT updated here
-  /// (would require a Cloud Function to write to another user's doc).
-  /// Their app will simply fail to load the team once they're no longer
-  /// in memberIds.
   Future<void> removeMember({
     required String teamId,
     required String memberId,
@@ -621,11 +630,6 @@ class FirestoreService {
     await _db.collection('teams').doc(teamId).update({'season': season});
   }
 
-  // ============================================================
-  // FIXTURE ODDS CACHE
-  // ============================================================
-
-  /// Returns cached odds for a fixture, or null if not yet fetched.
   Future<FixtureOddsCache?> fetchFixtureOddsCache(int apiFootballFixtureId) async {
     final snapshot = await _db
         .collection('fixtureOdds')
@@ -636,7 +640,6 @@ class FirestoreService {
     return FixtureOddsCache.fromMap(snapshot.docs.first.id, snapshot.docs.first.data());
   }
 
-  /// Saves or overwrites cached odds for a fixture.
   Future<void> saveFixtureOddsCache(FixtureOddsCache cache) async {
     if (cache.id != null) {
       await _db.collection('fixtureOdds').doc(cache.id).set(cache.toMap());
@@ -645,11 +648,6 @@ class FirestoreService {
     }
   }
 
-  // ============================================================
-  // LIVE MATCH EVENTS
-  // ============================================================
-
-  /// Records a processed live match event so it isn't notified twice.
   Future<void> recordLiveMatchEvent({
     required int apiFootballFixtureId,
     required String eventId,
@@ -673,7 +671,6 @@ class FirestoreService {
     });
   }
 
-  /// Returns the set of already-processed event IDs for a fixture.
   Future<Set<String>> fetchProcessedEventIds(int apiFootballFixtureId) async {
     final snapshot = await _db
         .collection('liveMatchEvents')
@@ -683,10 +680,6 @@ class FirestoreService {
         .map((d) => d.data()['eventId'] as String)
         .toSet();
   }
-
-  // ============================================================
-  // SEASON SUMMARIES
-  // ============================================================
 
   Future<List<SeasonSummary>> fetchSeasonSummariesForMember({
     required String teamId,
@@ -723,10 +716,6 @@ class FirestoreService {
     await _db.collection('seasonSummaries').add(summary.toMap());
   }
 
-  /// Generates and saves a SeasonSummary for every member at season end.
-  /// Called from gameweek_setup_screen's endSeason() flow, just before
-  /// the season actually advances, so all the current-season data is
-  /// still in place when this runs.
   Future<void> generateSeasonSummaries({
     required String teamId,
     required String season,
@@ -753,7 +742,6 @@ class FirestoreService {
       final entry = table[i];
       final stats = statsById[entry.memberId];
 
-      // Cup result for this member.
       String? cupResult;
       if (tournament != null && tournamentMatches.isNotEmpty) {
         final memberMatches = tournamentMatches
@@ -770,13 +758,11 @@ class FirestoreService {
         }
       }
 
-      // Biggest win description.
       String? biggestWinDesc;
       if (entry.biggestWin != null) {
         biggestWinDesc = entry.biggestWin!.selectionDescription;
       }
 
-      // Pre-season recommendations based on their own stats.
       final recs = <String>[];
       if (stats != null) {
         final winRate = entry.legsPlayed == 0 ? 0.0 : entry.legsWon / entry.legsPlayed;
@@ -804,7 +790,6 @@ class FirestoreService {
         recs.add('Keep making your picks every week — consistency is the foundation of winning the league.');
       }
 
-      // Check if a summary already exists for this member+season to avoid duplicates.
       final existing = await fetchSeasonSummary(teamId: teamId, memberId: entry.memberId, season: season);
       if (existing != null) continue;
 
@@ -831,10 +816,6 @@ class FirestoreService {
     }
   }
 
-  // ============================================================
-  // KUDOS REACTIONS
-  // ============================================================
-
   Future<List<Reaction>> fetchReactionsForGameWeek({
     required String teamId,
     required String gameWeekId,
@@ -847,10 +828,6 @@ class FirestoreService {
     return snapshot.docs.map((d) => Reaction.fromMap(d.id, d.data())).toList();
   }
 
-  /// Toggle: if the reactor already reacted to this leg with this emoji,
-  /// remove the reaction; otherwise add it. Sends a notification to the
-  /// leg's owner when a new reaction is added (not on removal — that
-  /// would be confusing).
   Future<void> toggleReaction({
     required String teamId,
     required String legId,
@@ -860,8 +837,6 @@ class FirestoreService {
     required String recipientMemberId,
     required String emoji,
   }) async {
-    // Find any existing reaction from this reactor on this leg — regardless
-    // of emoji, since each person can only hold one reaction per leg at a time.
     final existing = await _db
         .collection('reactions')
         .where('teamId', isEqualTo: teamId)
@@ -872,9 +847,7 @@ class FirestoreService {
       final existingDoc = existing.docs.first;
       final existingEmoji = existingDoc.data()['emoji'] as String? ?? '';
       await existingDoc.reference.delete();
-      // Same emoji tapped again → pure toggle off, nothing more to do.
       if (existingEmoji == emoji) return;
-      // Different emoji → remove the old one and fall through to add the new one.
     }
     final reaction = Reaction(
       teamId: teamId,
@@ -887,7 +860,6 @@ class FirestoreService {
       createdAt: DateTime.now(),
     );
     await _db.collection('reactions').add(reaction.toMap());
-    // Only notify if reacting to someone else's leg.
     if (reactorMemberId != recipientMemberId) {
       await sendNotification(
         teamId: teamId,
@@ -909,9 +881,6 @@ class FirestoreService {
     final snapshot = await _db.collection('fines').where('teamId', isEqualTo: teamId).get();
     final fines = snapshot.docs.map((doc) => Fine.fromMap(doc.id, doc.data())).toList();
 
-    // Resolve any disputes whose 3-day window has passed — client-side
-    // check, run whenever anyone loads the fines list, since there's no
-    // scheduled backend job for this yet.
     final now = DateTime.now();
     for (final fine in fines) {
       if (fine.status == FineStatus.disputed && fine.disputeDeadline != null && now.isAfter(fine.disputeDeadline!)) {
@@ -931,18 +900,15 @@ class FirestoreService {
       }
     }
 
-    // Re-fetch so the returned list reflects any resolutions just applied.
     final refreshed = await _db.collection('fines').where('teamId', isEqualTo: teamId).get();
     return refreshed.docs.map((doc) => Fine.fromMap(doc.id, doc.data())).toList();
   }
 
   Future<void> createFine(Fine fine) async {
     await _db.collection('fines').add(fine.toMap());
-    // Notify the whole team — everyone should know when someone's been fined.
     final members = await fetchMembers(fine.teamId);
     final allMemberIds = [for (final m in members) if (m.id != null) m.id!];
     final otherMemberIds = allMemberIds.where((id) => id != fine.memberId).toList();
-    // Personal notification to the fined member.
     await sendNotification(
       teamId: fine.teamId,
       recipientMemberIds: [fine.memberId],
@@ -950,7 +916,6 @@ class FirestoreService {
       title: '👺 Fine issued 👺',
       body: 'You have been fined by the gaffa — ${fine.fineType.displayName}.',
     );
-    // Squad-wide notification to everyone else.
     if (otherMemberIds.isNotEmpty) {
       await sendNotification(
         teamId: fine.teamId,
@@ -962,14 +927,6 @@ class FirestoreService {
     }
   }
 
-  // ============================================================
-  // YELLOW CARDS
-  // ============================================================
-
-  /// Random-variant copy, matching the playful/team-banter tone used
-  /// elsewhere (walkovers, round won/lost) — these go to the whole team,
-  /// not just the fined member, since they're meant to be seen and enjoyed
-  /// by everyone.
   static const List<(String title, String bodySuffix)> _singleYellowCardMessages = [
     ('🟨 Left the referee with no choice. 🟨', "receives a yellow card. They're on thin ice."),
     ("🟨 They've gone into the book. 🟨", 'receives a yellow card. Could that come back to bite?'),
@@ -990,13 +947,6 @@ class FirestoreService {
     return snapshot.docs.map((d) => YellowCard.fromMap(d.id, d.data())).toList();
   }
 
-  /// Issues a yellow card, then automatically fines the member if this is
-  /// their second unconsumed one this season — the fine goes through the
-  /// exact same Fine flow as any manually-issued one (so it's still
-  /// disputable), while the two contributing yellow cards get marked
-  /// consumed, resetting the visible tally back to 0. Exactly one
-  /// notification fires per call: the plain yellow-card one for a first
-  /// card, or the fine one for a second — never both.
   Future<void> createYellowCard(YellowCard card) async {
     await _db.collection('yellowCards').add(card.toMap());
 
@@ -1024,8 +974,6 @@ class FirestoreService {
       return;
     }
 
-    // Consume the two oldest unconsumed cards, in case more than 2 ever
-    // somehow accumulate before this check runs.
     final sorted = unconsumedSnapshot.docs.toList()
       ..sort((a, b) =>
           (a.data()['createdAt'] as Timestamp).compareTo(b.data()['createdAt'] as Timestamp));
@@ -1120,10 +1068,6 @@ class FirestoreService {
     return AccumulatorLeg.fromMap(snapshot.docs.first.id, snapshot.docs.first.data());
   }
 
-  /// Every leg a member has submitted for a gameweek — for a normal
-  /// gameweek this is 0 or 1, but a tournament-linked gameweek can have up
-  /// to 2 (primary + secondary), which fetchMemberLegForGameWeek's
-  /// single-result design can't represent.
   Future<List<AccumulatorLeg>> fetchMemberLegsForGameWeek({
     required String teamId,
     required String memberId,
@@ -1185,19 +1129,11 @@ class FirestoreService {
       recipientMemberIds: [for (final m in members) if (m.id != null) m.id!],
       type: NotificationType.gameweekLocked,
       title: '🔐 Gameweek locked 🔐',
-      body: 'Gameweek $weekNumber is locked in with ${OddsApiService.bookmakerDisplayNames[bookmaker] ?? bookmaker} — combined odds ${decimalToFractional(combinedOdds)}.'
+      body: 'Gameweek $weekNumber is locked in with ${OddsApiService.bookmakerDisplayNames[bookmaker] ?? bookmaker} — combined odds ${decimalToFractional(combinedOdds)}.',
     );
     await resolveTournamentWalkovers(teamId: teamId, gameWeekId: gameWeekId);
   }
 
-  /// Called once a gameweek's odds are locked in — the confirmed trigger
-  /// point for walkovers, since that's the moment selections are truly
-  /// finalised for the week. Checks every still-unresolved, non-bye
-  /// tournament match tied to this gameweek: if exactly one side never
-  /// submitted a primary leg, the other side wins by walkover; if neither
-  /// side submitted, a random pick between the two advances instead.
-  /// Matches where both sides did submit are left for the scheduled
-  /// cascade (settleLegs.js) to resolve once results are in.
   Future<void> resolveTournamentWalkovers({
     required String teamId,
     required String gameWeekId,
@@ -1228,7 +1164,7 @@ class FirestoreService {
       final bSubmitted = legs.any(
         (l) => l.tournamentMatchId == match.id && l.memberId == match.memberBId && !l.isSecondaryTournamentLeg,
       );
-      if (aSubmitted && bSubmitted) continue; // both submitted — leave for the scheduled cascade
+      if (aSubmitted && bSubmitted) continue;
       if (match.id == null) continue;
 
       final isWalkover = aSubmitted != bSubmitted;
@@ -1246,7 +1182,6 @@ class FirestoreService {
           loserName = match.memberAName;
         }
       } else {
-        // Neither side submitted — random pick between the two advances.
         final aWins = random.nextBool();
         winnerId = aWins ? match.memberAId : match.memberBId!;
         winnerName = aWins ? match.memberAName : (match.memberBName ?? '');
@@ -1270,7 +1205,7 @@ class FirestoreService {
     }
   }
 
-    Future<void> unlockGameWeek(String gameWeekId, {required String teamId}) async {
+  Future<void> unlockGameWeek(String gameWeekId, {required String teamId}) async {
     final gameWeekRef = _db.collection('gameWeeks').doc(gameWeekId);
     await _db.runTransaction((transaction) async {
       final legsSnap = await _db
@@ -1315,10 +1250,6 @@ class FirestoreService {
     return snapshot.docs.map((doc) => SeasonWinner.fromMap(doc.id, doc.data())).toList();
   }
 
-  /// Archives the current season's winner, then advances the team to a new
-  /// season string. Existing gameweeks/legs are untouched — they permanently
-  /// keep the season they were created under, which is what makes filtering
-  /// "this season only" possible later.
   Future<void> endSeason({
     required String teamId,
     required String currentSeason,
@@ -1340,7 +1271,7 @@ class FirestoreService {
     await teamRef.update({'season': newSeason});
   }
 
-    Future<GameWeek?> fetchActiveGameWeek(String teamId) async {
+  Future<GameWeek?> fetchActiveGameWeek(String teamId) async {
     final teamDoc = await _db.collection('teams').doc(teamId).get();
     final activeId = teamDoc.data()?['activeGameWeekId'] as String?;
     if (activeId == null) return null;
@@ -1349,17 +1280,12 @@ class FirestoreService {
     return GameWeek.fromMap(gwDoc.id, gwDoc.data()!);
   }
 
-  /// Whether every leg in [gameWeekId] has actually settled (won/lost) yet —
-  /// intended to gate a manager's "End Gameweek" button, since ending a
-  /// gameweek with legs still pending wouldn't reflect final results.
   Future<bool> areAllLegsSettled({required String teamId, required String gameWeekId}) async {
     final legsSnap = await _db.collection('legs').where('teamId', isEqualTo: teamId).where('gameWeekId', isEqualTo: gameWeekId).get();
     final legs = legsSnap.docs.map((d) => AccumulatorLeg.fromMap(d.id, d.data())).toList();
     return legs.isNotEmpty && legs.every((l) => l.outcome != LegOutcome.pending);
   }
 
-  /// Explicitly ends a gameweek — now only ever triggered by the manager's
-  /// "End Gameweek" button, not automatically once every leg happens to settle.
   Future<void> endActiveGameWeek({required String teamId, required GameWeek gameWeek}) async {
     if (gameWeek.id == null) return;
     await settleGameWeek(teamId: teamId, gameWeekId: gameWeek.id!);
@@ -1409,11 +1335,6 @@ class FirestoreService {
     }
   }
 
-  /// "Your opponent has picked" nudge — fires once a member's primary
-  /// tournament leg goes in, notifying only the other person in that
-  /// specific match. The primary leg is what "your weekly selection"
-  /// means everywhere else in the app, so that's the trigger — not the
-  /// secondary pick.
   Future<void> _notifyTournamentOpponentOfSubmission(AccumulatorLeg leg) async {
     if (leg.tournamentMatchId == null) return;
     final matchDoc = await _db.collection('tournamentMatches').doc(leg.tournamentMatchId).get();
@@ -1442,8 +1363,6 @@ class FirestoreService {
     return Member.fromMap(snapshot.docs.first.id, snapshot.docs.first.data());
   }
 
-  /// Atomic: only succeeds if the team has no active gameweek right now.
-  /// Prevents two rapid "create gameweek" taps from both succeeding.
   Future<void> createGameWeek(GameWeek gameWeek) async {
     final teamRef = _db.collection('teams').doc(gameWeek.teamId);
     final gameWeekRef = _db.collection('gameWeeks').doc();
@@ -1467,9 +1386,6 @@ class FirestoreService {
     );
   }
 
-  /// Marks a gameweek settled and clears the team's active pointer, so a
-  /// new one can be created. Not yet wired to a UI button — ready for when
-  /// the manual-settlement screen is rebuilt.
   Future<void> settleGameWeek({required String teamId, required String gameWeekId}) async {
     final teamRef = _db.collection('teams').doc(teamId);
     final gameWeekRef = _db.collection('gameWeeks').doc(gameWeekId);
@@ -1484,8 +1400,7 @@ class FirestoreService {
     });
   }
 
-
-Future<Team> createTeam({required String name, required String season, required String managerId}) async {
+  Future<Team> createTeam({required String name, required String season, required String managerId}) async {
     final inviteCode = _generateInviteCode();
 
     final docRef = await _db.collection('teams').add({
@@ -1542,8 +1457,6 @@ Future<Team> createTeam({required String name, required String season, required 
     await _db.collection('members').doc(docId).set(member.toMap());
   }
 
-  /// Only a manager can call this — enforced server-side by the rules,
-  /// not just hidden in the UI.
   Future<void> setMemberRole({required String memberDocId, required MemberRole role}) async {
     await _db.collection('members').doc(memberDocId).update({'role': role.value});
   }

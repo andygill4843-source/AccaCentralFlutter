@@ -27,7 +27,7 @@ class Team {
       inviteCode: map['inviteCode'],
       createdAt: map['createdAt'].toDate(),
       season: map['season'],
-      activeGameWeekId: map['activeGameWeekId'], // absent on older docs — reads as null, that's fine
+      activeGameWeekId: map['activeGameWeekId'],
     );
   }
   Map<String, dynamic> toMap() {
@@ -150,7 +150,7 @@ class GameWeek {
     DateTime? deadline,
     required this.season,
   })  : createdAt = createdAt ?? startDate,
-        deadline = deadline ?? startDate; // fallback for older gameweeks without a real deadline set
+        deadline = deadline ?? startDate;
   factory GameWeek.fromMap(String id, Map<String, dynamic> map) {
     return GameWeek(
       id: id,
@@ -255,15 +255,7 @@ class AccumulatorLeg {
   final DateTime kickoff;
   final BetType betType;
   final String selectionDescription;
-  /// The odds market this pick came from, e.g. "Match Winner", "Total - Home",
-  /// "Goals Over/Under". Stored so settlement logic can determine market-
-  /// specific context (like which team a Team Totals pick applies to)
-  /// without parsing it back out of selectionDescription.
   final String? marketName;
-  /// The raw API selection value for this pick, e.g. "Home", "Away", "Draw",
-  /// "Over 1.5", "Yes". Settlement engines match against this directly
-  /// instead of selectionDescription, which always contains both team
-  /// names and can't reliably disambiguate the actual pick.
   final String? pickValue;
   final double decimalOddsAtSelection;
   final String bookmaker;
@@ -375,10 +367,10 @@ class SeasonSummary {
   final int legsPlayed;
   final int legsWon;
   final int longestWinStreak;
-  final String? biggestWinDescription; // e.g. "Arsenal to win at 5/1"
+  final String? biggestWinDescription;
   final double? biggestWinOdds;
   final String? cupName;
-  final String? cupResult; // e.g. "Reached the Semi-Final", "Champion 🏆"
+  final String? cupResult;
   final List<String> recommendations;
   final DateTime createdAt;
   SeasonSummary({
@@ -444,14 +436,9 @@ class SeasonSummary {
     'createdAt': createdAt,
   };
 }
-
 // ============================================================
 // FIXTURE ODDS CACHE
 // ============================================================
-/// Cached odds for a fixture, stored in Firestore after the first user
-/// taps it. Holds per-bookmaker odds from both API Football (Bet365)
-/// and The Odds API (Paddy Power, Ladbrokes, William Hill, Sky Bet, Coral),
-/// plus pre-computed best odds across all 6 bookmakers per market.
 class FixtureOddsCache {
   final String? id;
   final int apiFootballFixtureId;
@@ -459,10 +446,8 @@ class FixtureOddsCache {
   final String awayTeam;
   final DateTime kickoff;
   final int apiFootballLeagueId;
-  final String leagueKey; // e.g. 'soccer_epl'
-  // bookmakerKey → marketName → list of {value, odd}
+  final String leagueKey;
   final Map<String, Map<String, List<Map<String, dynamic>>>> bookmakerOdds;
-  // marketName → list of {value, odd, bookmakerKey} — best across all bookmakers
   final Map<String, List<Map<String, dynamic>>> bestOdds;
   final DateTime fetchedAt;
   FixtureOddsCache({
@@ -531,7 +516,6 @@ class FixtureOddsCache {
     'bestOdds': bestOdds,
     'fetchedAt': fetchedAt,
   };
-  /// Returns the best available odd for a specific market value.
   double? bestOddFor(String marketName, String value) {
     final market = bestOdds[marketName];
     if (market == null) return null;
@@ -542,26 +526,18 @@ class FixtureOddsCache {
     if (match.isEmpty) return null;
     return (match['odd'] as num?)?.toDouble();
   }
-  /// Returns the specific bookmaker's odd for a market value.
   double? bookmakerOddFor(String bookmakerKey, String marketName, String value) {
     final bmData = bookmakerOdds[bookmakerKey];
-    if (bmData == null) {
-      return null;
-    }
+    if (bmData == null) return null;
     final market = bmData[marketName];
-    if (market == null) {
-      return null;
-    }
+    if (market == null) return null;
     final match = market.firstWhere(
       (v) => v['value'] == value,
       orElse: () => {},
     );
-    if (match.isEmpty) {
-      return null;
-    }
+    if (match.isEmpty) return null;
     return (match['odd'] as num?)?.toDouble();
   }
-  /// Combined decimal odds for the bookmaker across a list of selections.
   double combinedOddsForBookmaker(
     String bookmakerKey,
     List<({String marketName, String value})> selections,
@@ -569,7 +545,7 @@ class FixtureOddsCache {
     double combined = 1.0;
     for (final sel in selections) {
       final odd = bookmakerOddFor(bookmakerKey, sel.marketName, sel.value);
-      if (odd == null) return 0.0; // bookmaker doesn't cover this selection
+      if (odd == null) return 0.0;
       combined *= odd;
     }
     return combined;
@@ -708,7 +684,7 @@ extension FineStatusValue on FineStatus {
 class Fine {
   final String? id;
   final String teamId;
-  final String memberId; // who's being fined
+  final String memberId;
   final String memberName;
   final FineType fineType;
   final String reason;
@@ -721,7 +697,7 @@ class Fine {
   final String? disputeReason;
   final bool paid;
   final DateTime? paidAt;
-  final Map<String, bool> votes; // memberId -> true (uphold) / false (overturn)
+  final Map<String, bool> votes;
   Fine({
     this.id,
     required this.teamId,
@@ -740,10 +716,6 @@ class Fine {
     this.paidAt,
     this.votes = const {},
   });
-  /// Counts toward the tally from the moment it's placed, and stays on the
-  /// tally the whole way through — pending, accepted, or under dispute.
-  /// The only outcome that removes it is a successful dispute (Overturned);
-  /// Upheld or a tied vote leaves it counted.
   bool get countsTowardTally => status != FineStatus.overturned && !paid;
   factory Fine.fromMap(String id, Map<String, dynamic> map) {
     return Fine(
@@ -757,7 +729,7 @@ class Fine {
       createdByMemberId: map['createdByMemberId'],
       createdByName: map['createdByName'] ?? 'Unknown',
       createdAt: map['createdAt'].toDate(),
-      season: map['season'] ?? 'Unknown Season', // fines placed before this field existed
+      season: map['season'] ?? 'Unknown Season',
       disputeDeadline: (map['disputeDeadline'] as dynamic)?.toDate(),
       disputeReason: map['disputeReason'] as String?,
       paid: map['paid'] ?? false,
@@ -785,10 +757,24 @@ class Fine {
     };
   }
 }
-enum ChallengeStatus { active, resolved }
+enum ChallengeStatus { pendingAcceptance, active, declined, resolved }
 extension ChallengeStatusValue on ChallengeStatus {
-  String get value => this == ChallengeStatus.active ? 'active' : 'resolved';
-  static ChallengeStatus fromValue(String? v) => v == 'resolved' ? ChallengeStatus.resolved : ChallengeStatus.active;
+  String get value {
+    switch (this) {
+      case ChallengeStatus.pendingAcceptance: return 'pending_acceptance';
+      case ChallengeStatus.active: return 'active';
+      case ChallengeStatus.declined: return 'declined';
+      case ChallengeStatus.resolved: return 'resolved';
+    }
+  }
+  static ChallengeStatus fromValue(String? v) {
+    switch (v) {
+      case 'active': return ChallengeStatus.active;
+      case 'declined': return ChallengeStatus.declined;
+      case 'resolved': return ChallengeStatus.resolved;
+      default: return ChallengeStatus.pendingAcceptance;
+    }
+  }
 }
 class Challenge {
   final String? id;
@@ -806,7 +792,7 @@ class Challenge {
   final String? challengerLegDescription;
   final double? challengerLegOdds;
   final ChallengeStatus status;
-  final bool? challengerWon; // null until resolved
+  final bool? challengerWon;
   final DateTime createdAt;
   Challenge({
     this.id,
@@ -827,8 +813,6 @@ class Challenge {
     this.challengerWon,
     required this.createdAt,
   });
-  /// The hypothetical win value of a leg at these odds — 3 base points,
-  /// plus weighted points the same way any winning leg is scored.
   static double hypotheticalWeightedPoints(double odds) => (odds - 1) * 3;
   static const int hypotheticalBasePoints = 3;
   factory Challenge.fromMap(String id, Map<String, dynamic> map) {
@@ -881,6 +865,8 @@ enum NotificationType {
   disputeResolved,
   nudge,
   challengePlaced,
+  challengeAccepted,
+  challengeDeclined,
   challengeResolved,
   gameweekLocked,
   leaguePosition,
@@ -888,7 +874,6 @@ enum NotificationType {
   physioUsed,
   yellowCardIssued,
   kudosReceived,
-  // Knockout tournament
   tournamentDrawDateSet,
   tournamentDrawLive,
   tournamentDrawnAgainst,
@@ -949,10 +934,6 @@ class AppNotification {
 // ============================================================
 // YELLOW CARDS
 // ============================================================
-/// A generic, non-disputable offence recorded against a member. Kept
-/// permanently for history — [consumedByFineId] is what tracks the
-/// "current" tally: null means it still counts toward the next fine,
-/// non-null means it was one of the pair that already triggered one.
 class YellowCard {
   final String? id;
   final String teamId;
@@ -1007,9 +988,6 @@ class YellowCard {
 // ============================================================
 // KUDOS REACTIONS
 // ============================================================
-/// An emoji reaction on a locked leg. Each member can react with each
-/// emoji independently — tapping the same emoji again removes the
-/// reaction (toggle). Three supported emojis: 👍 ❤️ 😂
 class Reaction {
   final String? id;
   final String teamId;
@@ -1115,15 +1093,7 @@ class Tournament {
   final String name;
   final DateTime drawDateTime;
   final TournamentStatus status;
-  /// Next-lower-power-of-2 size of the first main round (e.g. 8 = starts
-  /// at Quarter-Finals). Deliberately null until the draw actually happens
-  /// (Stage 2) — at creation time, a brand-new team only has the manager
-  /// as a member, so there's nothing meaningful to compute this from yet.
   final int? mainBracketSize;
-  /// Which round is currently live: null before the first draw, 0 for the
-  /// preliminary/byes tier, then mainBracketSize, mainBracketSize/2, ...
-  /// down to 2 (the Final). Single source of truth for round progression —
-  /// avoids inferring it by querying/grouping TournamentMatch documents.
   final int? currentRoundSize;
   final DateTime createdAt;
   Tournament({
@@ -1163,9 +1133,6 @@ class Tournament {
     };
   }
 }
-/// A single tournament fixture — one pairing (or a bye) within a round.
-/// roundSize follows Tournament.currentRoundSize's convention: 0 for the
-/// preliminary/byes tier, then mainBracketSize down to 2 (the Final).
 class TournamentMatch {
   final String? id;
   final String tournamentId;
@@ -1174,13 +1141,13 @@ class TournamentMatch {
   final int roundSize;
   final String memberAId;
   final String memberAName;
-  final String? memberBId; // null = a bye
+  final String? memberBId;
   final String? memberBName;
   final bool isBye;
   final bool isBigCupTie;
   final bool revealed;
-  final String? gameWeekId; // set once this round is attached to a gameweek
-  final String? winnerMemberId; // pre-set at creation for a bye; null otherwise until resolved
+  final String? gameWeekId;
+  final String? winnerMemberId;
   final String? winnerName;
   final DateTime createdAt;
   TournamentMatch({
@@ -1242,9 +1209,6 @@ class TournamentMatch {
     };
   }
 }
-/// Human-readable label for a round, derived from roundSize rather than
-/// stored, so it stays correct even if mainBracketSize varies between
-/// tournaments (e.g. 8 members vs 20 members both eventually reach "Final").
 String tournamentRoundLabel(int roundSize) {
   if (roundSize == 0) return 'Qualifying Round';
   switch (roundSize) {

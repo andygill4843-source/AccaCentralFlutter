@@ -68,6 +68,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case NotificationType.legRejected:
       case NotificationType.nudge:
       case NotificationType.challengePlaced:
+      case NotificationType.challengeAccepted:
+      case NotificationType.challengeDeclined:
       case NotificationType.challengeResolved:
       case NotificationType.fineIssued:
       case NotificationType.fineDisputeVote:

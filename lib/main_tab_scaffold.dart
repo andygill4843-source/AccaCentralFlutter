@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'app_state.dart';
+import 'firestore_service.dart';
+import 'challenge_response_dialog.dart';
 import 'home_screen.dart';
 import 'acca_hub_screen.dart';
 import 'league_table_tab.dart';
@@ -25,8 +27,8 @@ class _MainTabScaffoldState extends State<MainTabScaffold> {
   @override
   void initState() {
     super.initState();
-    // Listen for tab-switch requests from notifications.
     widget.appState.addListener(_onAppStateChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkPendingChallenges());
   }
 
   @override
@@ -39,6 +41,29 @@ class _MainTabScaffoldState extends State<MainTabScaffold> {
     final pending = widget.appState.consumePendingTabNavigation();
     if (pending != null && mounted) {
       setState(() => currentIndex = pending.clamp(0, 5));
+    }
+  }
+
+  /// Shows an accept/reject popup for any challenge awaiting this
+  /// member's response, one at a time. Dismissible without deciding —
+  /// it'll simply reappear next time the app opens (or auto-accept once
+  /// the challenged leg kicks off, whichever comes first).
+  Future<void> _checkPendingChallenges() async {
+    final userId = widget.appState.currentUser?.id;
+    if (userId == null) return;
+    final member = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
+    if (member?.id == null || !mounted) return;
+    final pending = await FirestoreService.instance.fetchPendingAcceptanceChallengesForMember(
+      teamId: widget.teamId,
+      memberId: member!.id!,
+    );
+    for (final challenge in pending) {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (_) => ChallengeResponseDialog(challenge: challenge),
+      );
     }
   }
 
