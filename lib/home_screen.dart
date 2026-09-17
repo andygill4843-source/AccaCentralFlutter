@@ -152,6 +152,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final currentSeasonGameWeeks = gameWeeks.where((g) => g.season == team?.season).toList();
       final currentSeasonGameWeekIds = currentSeasonGameWeeks.map((g) => g.id).toSet();
       final currentSeasonLegs = allLegs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
+      // Current, live standing correctly includes every resolved challenge
+      // regardless of when it happened — this is meant to be "as of now".
       final table = ScoringEngine.buildLeagueTable(members: loadedMembers, legs: currentSeasonLegs, challenges: challenges);
       LeagueTableEntry? mine;
       int? offThird;
@@ -187,7 +189,13 @@ class _HomeScreenState extends State<HomeScreen> {
         if (settledWeeks.length >= 2) {
           final previousGameWeekIds = settledWeeks.where((g) => g.weekNumber < lastWeek.weekNumber).map((g) => g.id).toSet();
           final previousLegs = currentSeasonLegs.where((l) => previousGameWeekIds.contains(l.gameWeekId)).toList();
-          final previousEntries = ScoringEngine.buildLeagueTable(members: loadedMembers, legs: previousLegs, challenges: challenges);
+          // FIX: challenges must be scoped to the same gameweek window as
+          // the legs, or a challenge that only resolved in a LATER week
+          // wrongly injects its bonus points into this earlier snapshot —
+          // producing a "previous position" that never actually existed,
+          // and therefore a wrong climbed/dropped arrow here.
+          final previousChallenges = challenges.where((c) => previousGameWeekIds.contains(c.gameWeekId)).toList();
+          final previousEntries = ScoringEngine.buildLeagueTable(members: loadedMembers, legs: previousLegs, challenges: previousChallenges);
           final Map<String, int> previousPosition = {
             for (int i = 0; i < previousEntries.length; i++) previousEntries[i].memberId: i + 1,
           };
@@ -426,7 +434,7 @@ class _HomeScreenState extends State<HomeScreen> {
           if (activeGameWeek?.combinedOdds != null) ...[
             const SizedBox(height: 8),
             Text(
-              'Accumulator odds: ${decimalToFractional(activeGameWeek!.combinedOdds!)}',
+              'Accumulator odds: ${combinedOddsToFractional(activeGameWeek!.combinedOdds!)}',
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black),
             ),
           ],
@@ -580,11 +588,6 @@ class _HomeScreenState extends State<HomeScreen> {
       (r) => r.emoji == emoji && r.reactorMemberId == currentMember?.id,
     );
     return GestureDetector(
-      // Tap always toggles your own reaction — whether you're the first
-      // person to react with this emoji or joining others already there.
-      // Seeing who else reacted is long-press only (below); the previous
-      // "show reactors first" gate on tap meant nobody after the first
-      // reactor could ever add their own reaction via tap.
       onTap: () => _react(leg, emoji),
       onLongPress: () => _showReactors(context, emoji, legReactions),
       child: AnimatedContainer(

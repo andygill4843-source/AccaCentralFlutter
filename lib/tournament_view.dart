@@ -8,7 +8,8 @@ import 'odds_format.dart';
 class TournamentView extends StatefulWidget {
   final AppState appState;
   final String teamId;
-  const TournamentView({super.key, required this.appState, required this.teamId});
+  final Tournament tournament;
+  const TournamentView({super.key, required this.appState, required this.teamId, required this.tournament});
   @override
   State<TournamentView> createState() => _TournamentViewState();
 }
@@ -34,6 +35,18 @@ class _TournamentViewState extends State<TournamentView> {
     load();
   }
 
+  @override
+  void didUpdateWidget(covariant TournamentView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.tournament.id != widget.tournament.id) {
+      load();
+    }
+  }
+
+  /// Loads the CURRENT state of widget.tournament by ID — not by
+  /// team+season, since a team can now have several tournaments at once
+  /// and this widget always represents one specific one, passed in from
+  /// TournamentScreen's swipeable pages.
   Future<void> load() async {
     setState(() {
       isLoading = true;
@@ -45,20 +58,27 @@ class _TournamentViewState extends State<TournamentView> {
         final member = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
         isManager = member?.role == MemberRole.manager;
       }
-      final team = await FirestoreService.instance.fetchTeam(widget.teamId);
-      final season = team?.season ?? '';
-      final t = await FirestoreService.instance.fetchTournament(teamId: widget.teamId, season: season);
+      final tournamentId = widget.tournament.id;
+      if (tournamentId == null) {
+        if (!mounted) return;
+        setState(() {
+          tournament = widget.tournament;
+          isLoading = false;
+        });
+        return;
+      }
+      final t = await FirestoreService.instance.fetchTournamentById(tournamentId);
       List<TournamentMatch> matches = [];
       List<AccumulatorLeg> legs = [];
-      if (t != null && t.id != null) {
-        matches = await FirestoreService.instance.fetchTournamentMatches(teamId: widget.teamId, tournamentId: t.id!);
+      if (t != null) {
+        matches = await FirestoreService.instance.fetchTournamentMatches(teamId: widget.teamId, tournamentId: tournamentId);
         final matchIds = {for (final m in matches) if (m.id != null) m.id!};
         final allLegs = await FirestoreService.instance.fetchLegs(widget.teamId);
         legs = allLegs.where((l) => l.tournamentMatchId != null && matchIds.contains(l.tournamentMatchId)).toList();
       }
       if (!mounted) return;
       setState(() {
-        tournament = t;
+        tournament = t ?? widget.tournament;
         allMatches = matches;
         tournamentLegs = legs;
         isLoading = false;
@@ -153,7 +173,7 @@ class _TournamentViewState extends State<TournamentView> {
   Widget build(BuildContext context) {
     // No RefreshIndicator/Scaffold here deliberately — this widget is
     // designed to be embedded inside another screen's own scrollable body
-    // (e.g. LeagueTableTab's League/Cup toggle), so it can't own its own
+    // (e.g. TournamentScreen's PageView pages), so it can't own its own
     // scroll gesture or pull-to-refresh without conflicting with the
     // parent. shrinkWrap + non-scrollable physics let it size itself to
     // its content and let whatever wraps it handle scrolling instead.

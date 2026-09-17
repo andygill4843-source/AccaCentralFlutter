@@ -1093,8 +1093,25 @@ class Tournament {
   final String name;
   final DateTime drawDateTime;
   final TournamentStatus status;
+  /// The bracket size this tournament's named rounds start at (e.g. 8 =
+  /// starts at Quarter-Finals). For the original single-tournament flow
+  /// this is left null until the draw itself (computed automatically
+  /// from participant count at that point). For a tournament created via
+  /// the "additional tournaments" flow, this is set directly at creation
+  /// time from the manager's chosen round count.
   final int? mainBracketSize;
+  /// Which round is currently live: null before the first draw, 0 for
+  /// the preliminary/byes tier, then mainBracketSize down to 2 (the
+  /// Final).
   final int? currentRoundSize;
+  /// Restricts the draw to exactly these members instead of the whole
+  /// team — set when the manager chose fewer rounds than the team size
+  /// allows, and therefore had to pick (randomly, by league position, or
+  /// manually) exactly mainBracketSize participants. Null means everyone
+  /// currently on the team is eligible (the original, single-tournament
+  /// behaviour, and also the "max rounds" case for an additional
+  /// tournament).
+  final List<String>? participantMemberIds;
   final DateTime createdAt;
   Tournament({
     this.id,
@@ -1105,6 +1122,7 @@ class Tournament {
     this.status = TournamentStatus.pendingDraw,
     this.mainBracketSize,
     this.currentRoundSize,
+    this.participantMemberIds,
     required this.createdAt,
   });
   factory Tournament.fromMap(String id, Map<String, dynamic> map) {
@@ -1117,6 +1135,9 @@ class Tournament {
       status: TournamentStatusValue.fromValue(map['status']),
       mainBracketSize: map['mainBracketSize'],
       currentRoundSize: map['currentRoundSize'],
+      participantMemberIds: map['participantMemberIds'] != null
+          ? List<String>.from(map['participantMemberIds'])
+          : null,
       createdAt: map['createdAt'].toDate(),
     );
   }
@@ -1129,6 +1150,7 @@ class Tournament {
       'status': status.value,
       'mainBracketSize': mainBracketSize,
       'currentRoundSize': currentRoundSize,
+      'participantMemberIds': participantMemberIds,
       'createdAt': createdAt,
     };
   }
@@ -1209,6 +1231,8 @@ class TournamentMatch {
     };
   }
 }
+/// Human-readable label for a round, derived from roundSize rather than
+/// stored.
 String tournamentRoundLabel(int roundSize) {
   if (roundSize == 0) return 'Qualifying Round';
   switch (roundSize) {

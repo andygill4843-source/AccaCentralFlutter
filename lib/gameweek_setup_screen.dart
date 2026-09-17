@@ -5,6 +5,7 @@ import 'firestore_service.dart';
 import 'models.dart';
 import 'scoring_engine.dart';
 import 'main.dart'; // for AccaColors
+import 'tournament_link_picker_screen.dart';
 
 class GameWeekSetupScreen extends StatefulWidget {
   final AppState appState;
@@ -24,8 +25,8 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
   String? currentSeason;
   GameWeek? activeGameWeek;
   bool isManager = false;
-  Tournament? availableTournament; // an in-progress round not yet attached to any gameweek
-  bool linkToTournament = false;
+  List<Tournament> availableTournaments = []; // in-progress rounds not yet attached to any gameweek
+  Tournament? selectedTournamentForLink;
 
   @override
   void initState() {
@@ -61,22 +62,22 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     if (team != null) await loadAvailableTournamentRound(team.season);
   }
 
-  /// A round only shows up as available once it's actually been drawn
-  /// (currentRoundSize set) and hasn't already been linked to a different
-  /// gameweek — the whole round attaches at once, so once it's attached,
-  /// it's no longer offered here.
+    /// Every in-progress tournament (there can now be several at once)
+  /// whose CURRENT round hasn't already been attached to a different
+  /// gameweek — each one is a candidate to link this new gameweek to.
   Future<void> loadAvailableTournamentRound(String season) async {
-    final tournament = await FirestoreService.instance.fetchTournament(teamId: widget.teamId, season: season);
-    if (tournament == null || tournament.status != TournamentStatus.inProgress || tournament.currentRoundSize == null) {
-      if (mounted) setState(() => availableTournament = null);
-      return;
+    final tournaments = await FirestoreService.instance.fetchTournaments(teamId: widget.teamId, season: season);
+    final candidates = <Tournament>[];
+    for (final t in tournaments) {
+      if (t.status != TournamentStatus.inProgress || t.currentRoundSize == null || t.id == null) continue;
+      final alreadyAttached = await FirestoreService.instance.isTournamentRoundAttached(
+        teamId: widget.teamId,
+        tournamentId: t.id!,
+        roundSize: t.currentRoundSize!,
+      );
+      if (!alreadyAttached) candidates.add(t);
     }
-    final alreadyAttached = await FirestoreService.instance.isTournamentRoundAttached(
-      teamId: widget.teamId,
-      tournamentId: tournament.id!,
-      roundSize: tournament.currentRoundSize!,
-    );
-    if (mounted) setState(() => availableTournament = alreadyAttached ? null : tournament);
+    if (mounted) setState(() => availableTournaments = candidates);
   }
 
   Future<void> loadActiveGameWeek() async {
@@ -154,13 +155,13 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         season: (await FirestoreService.instance.fetchTeam(teamId))?.season ?? '2026-27',
       );
       await FirestoreService.instance.createGameWeek(gameWeek);
-      if (linkToTournament && availableTournament?.id != null && availableTournament?.currentRoundSize != null) {
+            if (selectedTournamentForLink?.id != null && selectedTournamentForLink?.currentRoundSize != null) {
         final newGameWeek = await FirestoreService.instance.fetchActiveGameWeek(teamId);
         if (newGameWeek?.id != null) {
           await FirestoreService.instance.attachTournamentRoundToGameWeek(
             teamId: teamId,
-            tournamentId: availableTournament!.id!,
-            roundSize: availableTournament!.currentRoundSize!,
+            tournamentId: selectedTournamentForLink!.id!,
+            roundSize: selectedTournamentForLink!.currentRoundSize!,
             gameWeekId: newGameWeek!.id!,
           );
         }
@@ -396,10 +397,16 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       final seasonLegs = allLegs.where((l) => seasonGameWeekIds.contains(l.gameWeekId)).toList();
       final seasonGameWeeks = allGameWeeks.where((g) => g.season == team.season).toList();
       final allMembers = await FirestoreService.instance.fetchMembers(teamId);
-      final tournament = await FirestoreService.instance.fetchTournament(teamId: teamId, season: team.season);
-      List<TournamentMatch> tournamentMatches = [];
-      if (tournament?.id != null) {
-        tournamentMatches = await FirestoreService.instance.fetchTournamentMatches(teamId: teamId, tournamentId: tournament!.id!);
+            // Fetch every tournament this season (a team can now run more than
+      // one at once) along with its own matches, so no cup result gets
+      // silently dropped just because it wasn't the first tournament
+      // created.
+      final seasonTournaments = await FirestoreService.instance.fetchTournaments(teamId: teamId, season: team.season);
+      final tournamentsWithMatches = <({Tournament tournament, List<TournamentMatch> matches})>[];
+      for (final t in seasonTournaments) {
+        if (t.id == null) continue;
+        final matches = await FirestoreService.instance.fetchTournamentMatches(teamId: teamId, tournamentId: t.id!);
+        tournamentsWithMatches.add((tournament: t, matches: matches));
       }
       await FirestoreService.instance.generateSeasonSummaries(
         teamId: teamId,
@@ -408,8 +415,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         legs: seasonLegs,
         gameWeeks: seasonGameWeeks,
         challenges: allChallenges,
-        tournament: tournament,
-        tournamentMatches: tournamentMatches,
+        tournaments: tournamentsWithMatches,
       );
       await FirestoreService.instance.endSeason(
         teamId: teamId,
@@ -593,17 +599,29 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
               subtitle: Text(formatDateTime(deadline)),
               onTap: () => pickDateField(() => deadline, (d) => deadline = d),
             ),
-            if (availableTournament != null) ...[
+            if (availableTournaments.isNotEmpty) ...[
               const SizedBox(height: 8),
-              SwitchListTile(
+              ListTile(
                 tileColor: AccaColors.surface,
-                title: Text(
-                  'Part of ${availableTournament!.name} '
-                  '(${tournamentRoundLabel(availableTournament!.currentRoundSize!)})?',
-                  style: const TextStyle(fontSize: 13),
+                title: const Text('Part of a tournament round?'),
+                subtitle: Text(
+                  selectedTournamentForLink == null
+                      ? 'No'
+                      : '${selectedTournamentForLink!.name} (${tournamentRoundLabel(selectedTournamentForLink!.currentRoundSize!)})',
                 ),
-                value: linkToTournament,
-                onChanged: (v) => setState(() => linkToTournament = v),
+                onTap: () async {
+                  final result = await Navigator.of(context).push<TournamentLinkChoice>(
+                    MaterialPageRoute(
+                      builder: (_) => TournamentLinkPickerScreen(
+                        options: availableTournaments,
+                        current: selectedTournamentForLink,
+                      ),
+                    ),
+                  );
+                  if (result != null) {
+                    setState(() => selectedTournamentForLink = result.tournament);
+                  }
+                },
               ),
             ],
             if (errorMessage != null) ...[

@@ -18,20 +18,54 @@ class TournamentBracketEngine {
     return power;
   }
 
-  /// The initial draw: splits all current members into byes (straight
+  /// The maximum number of rounds a tournament can have for a given team
+  /// size — how many times the field can be halved before reaching a
+  /// 2-person Final. E.g. 12 -> 3 (bracket size 8: Quarter, Semi, Final).
+  static int maxRounds(int teamSize) {
+    if (teamSize < 2) return 0;
+    var rounds = 0;
+    var size = 1;
+    while (size * 2 <= teamSize) {
+      size *= 2;
+      rounds++;
+    }
+    return rounds;
+  }
+
+
+  /// Determines the roundSize for the next round based on how many
+  /// participants remain.
+  ///
+  /// If the remaining participants are more than the main bracket size,
+  /// they are still in the preliminary stage, represented by roundSize 0.
+  /// Once the field reaches the main bracket size, that becomes the round
+  /// size. Each subsequent round uses the current number of participants.
+  static int nextRoundSizeFor({
+    required int remainingParticipants,
+    required int targetMainBracketSize,
+  }) {
+    if (remainingParticipants > targetMainBracketSize) {
+      return 0;
+    }
+
+    return remainingParticipants;
+  }
+
+  /// The initial draw: splits the given participants into byes (straight
   /// through to the main bracket) and preliminary-round pairings, so that
   /// exactly mainBracketSize people remain once the preliminary round
-  /// resolves. If the member count is already an exact power of 2, no
-  /// preliminary round is needed at all — every member is paired straight
-  /// into the main bracket instead, and the preliminary/byes tier is
-  /// skipped entirely.
+  /// resolves. If the participant count is already an exact power of 2 —
+  /// which is always true when the manager pre-selected exactly
+  /// mainBracketSize participants via random/league-table/manual choice —
+  /// no preliminary round is needed at all; everyone pairs straight into
+  /// the main bracket instead.
   static List<TournamentMatch> buildInitialRound({
     required Tournament tournament,
     required List<({String id, String name})> shuffledParticipants,
     required Map<String, int> leaguePositions,
   }) {
     final n = shuffledParticipants.length;
-    final mainBracketSize = largestPowerOfTwoAtMost(n);
+    final mainBracketSize = tournament.mainBracketSize ?? largestPowerOfTwoAtMost(n);
     final preliminaryMatchCount = n - mainBracketSize;
     final now = DateTime.now();
 

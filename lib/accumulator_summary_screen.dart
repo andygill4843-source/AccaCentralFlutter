@@ -148,7 +148,9 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
   List<AccumulatorLeg> get primaryLegs => legs.where((l) => !l.isSecondaryTournamentLeg).toList();
   /// Only a bookmaker present on EVERY primary leg qualifies — you can't
   /// place one accumulator bet with a bookmaker missing a price on any leg
-  /// of it.
+  /// of it. combined is the TRUE combined decimal odds — the exact product
+  /// of each leg's raw API price, never a rounded/mapped value — this is
+  /// what gets stored and what any display formatting is derived from.
   List<_BookmakerOption> get bookmakerOptions {
     final relevant = primaryLegs;
     if (relevant.isEmpty) return [];
@@ -253,7 +255,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
     final buffer = StringBuffer();
     buffer.writeln('Acca Central — Gameweek ${widget.gameWeek.weekNumber}');
     buffer.writeln('Bookmaker: ${_bookmakerDisplayName(option.bookmaker)}');
-    buffer.writeln('Combined odds: ${decimalToFractional(option.combinedOdds)}');
+    buffer.writeln('Combined odds: ${combinedOddsToFractional(option.combinedOdds)}');
     buffer.writeln();
     for (final leg in primaryLegs) {
       final name = memberNames[leg.memberId] ?? 'Unknown';
@@ -350,7 +352,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                                 children: [
                                   const Text('Selected bookmaker', style: TextStyle(fontSize: 12)),
                                   Text(_bookmakerDisplayName(selectedBookmaker!), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                                  if (combinedOdds != null) Text('Combined odds: ${decimalToFractional(combinedOdds!)}'),
+                                  if (combinedOdds != null) Text('Combined odds: ${combinedOddsToFractional(combinedOdds!)}'),
                                 ],
                               ),
                             ),
@@ -423,7 +425,7 @@ class _AccumulatorSummaryScreenState extends State<AccumulatorSummaryScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(_bookmakerDisplayName(option.bookmaker), style: const TextStyle(fontWeight: FontWeight.w600)),
-                      Text('Combined odds: ${decimalToFractional(option.combinedOdds)}', style: const TextStyle(fontSize: 12)),
+                      Text('Combined odds: ${combinedOddsToFractional(option.combinedOdds)}', style: const TextStyle(fontSize: 12)),
                     ],
                   ),
                 ),

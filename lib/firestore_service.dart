@@ -4,8 +4,8 @@ import 'models.dart';
 import 'package:uuid/uuid.dart';
 import 'scoring_engine.dart';
 import 'tournament_bracket_engine.dart';
-import 'odds_api_service.dart';
 import 'odds_format.dart';
+import 'odds_api_service.dart';
 
 class FirestoreService {
   static final FirestoreService instance = FirestoreService._();
@@ -193,7 +193,14 @@ class FirestoreService {
   // KNOCKOUT TOURNAMENT
   // ============================================================
 
-  Future<void> createTournament(Tournament tournament) async {
+    Future<void> createTournament(Tournament tournament) async {
+    final existing = await fetchTournaments(teamId: tournament.teamId, season: tournament.season);
+    final normalizedNewName = tournament.name.trim().toLowerCase();
+    final duplicate = existing.any((t) => t.name.trim().toLowerCase() == normalizedNewName);
+    if (duplicate) {
+      throw Exception('A tournament called "${tournament.name.trim()}" already exists this season.');
+    }
+
     await _db.collection('tournaments').add(tournament.toMap());
     final members = await fetchMembers(tournament.teamId);
     final dt = tournament.drawDateTime;
@@ -208,6 +215,9 @@ class FirestoreService {
     );
   }
 
+  /// The single tournament for a season — kept for existing call sites
+  /// (season summaries) that predate multi-tournament support. Where
+  /// there could be several, prefer fetchTournaments below.
   Future<Tournament?> fetchTournament({required String teamId, required String season}) async {
     final snapshot = await _db
         .collection('tournaments')
@@ -217,6 +227,26 @@ class FirestoreService {
         .get();
     if (snapshot.docs.isEmpty) return null;
     return Tournament.fromMap(snapshot.docs.first.id, snapshot.docs.first.data());
+  }
+
+  /// Every tournament for a season — a team can now run more than one
+  /// knockout tournament at the same time.
+  Future<List<Tournament>> fetchTournaments({required String teamId, required String season}) async {
+    final snapshot = await _db
+        .collection('tournaments')
+        .where('teamId', isEqualTo: teamId)
+        .where('season', isEqualTo: season)
+        .get();
+    return snapshot.docs.map((d) => Tournament.fromMap(d.id, d.data())).toList();
+  }
+
+  /// A single tournament's current document, by ID — used to refresh a
+  /// specific tournament's state (e.g. currentRoundSize) after an action
+  /// without needing to re-fetch the whole season's list.
+  Future<Tournament?> fetchTournamentById(String tournamentId) async {
+    final doc = await _db.collection('tournaments').doc(tournamentId).get();
+    if (!doc.exists) return null;
+    return Tournament.fromMap(doc.id, doc.data()!);
   }
 
   Future<Map<String, int>> _leagueTablePositions({required String teamId, required String season}) async {
@@ -253,14 +283,22 @@ class FirestoreService {
     return snapshot.docs.map((d) => TournamentMatch.fromMap(d.id, d.data())).toList();
   }
 
+    /// The manager's "draw" for a brand-new tournament with no rounds yet.
+  /// Restricted to tournament.participantMemberIds when set (the manager
+  /// chose fewer rounds than the team size allows, and pre-selected
+  /// exactly enough participants for that bracket size) — otherwise
+  /// everyone currently on the team is eligible.
   Future<void> drawInitialTournamentRound(Tournament tournament) async {
     if (tournament.id == null) throw Exception('Tournament has no id.');
     final existing = await fetchTournamentMatches(teamId: tournament.teamId, tournamentId: tournament.id!);
     if (existing.isNotEmpty) {
       throw Exception('This tournament has already been drawn.');
     }
-    final members = await fetchMembers(tournament.teamId);
-    final participants = [for (final m in members) if (m.id != null) (id: m.id!, name: m.displayName)]..shuffle();
+    final allMembers = await fetchMembers(tournament.teamId);
+    final eligibleMembers = tournament.participantMemberIds != null
+        ? allMembers.where((m) => tournament.participantMemberIds!.contains(m.id)).toList()
+        : allMembers;
+    final participants = [for (final m in eligibleMembers) if (m.id != null) (id: m.id!, name: m.displayName)]..shuffle();
     if (participants.length < 2) {
       throw Exception('Need at least 2 members to draw a tournament.');
     }
@@ -270,8 +308,9 @@ class FirestoreService {
       shuffledParticipants: participants,
       leaguePositions: positions,
     );
-    final mainBracketSize = TournamentBracketEngine.largestPowerOfTwoAtMost(participants.length);
-    final firstRoundSize = matches.isNotEmpty ? matches.first.roundSize : mainBracketSize;
+    final naturalBracketSize = TournamentBracketEngine.largestPowerOfTwoAtMost(participants.length);
+    final effectiveMainBracketSize = tournament.mainBracketSize ?? naturalBracketSize;
+    final firstRoundSize = matches.isNotEmpty ? matches.first.roundSize : effectiveMainBracketSize;
 
     final batch = _db.batch();
     for (final match in matches) {
@@ -279,13 +318,18 @@ class FirestoreService {
       batch.set(ref, match.toMap());
     }
     batch.update(_db.collection('tournaments').doc(tournament.id), {
-      'mainBracketSize': mainBracketSize,
+      'mainBracketSize': effectiveMainBracketSize,
       'currentRoundSize': firstRoundSize,
       'status': TournamentStatus.inProgress.value,
     });
     await batch.commit();
   }
 
+  /// Draws the next round once every match in the current round has a
+  /// winnerMemberId set. Which round comes next — another qualifying tier
+  /// or the start of the real named rounds — is decided by how many
+  /// winners there actually are, compared against the tournament's target
+  /// bracket size (see TournamentBracketEngine.nextRoundSizeFor).
   Future<void> drawNextTournamentRound(Tournament tournament) async {
     if (tournament.id == null || tournament.currentRoundSize == null) {
       throw Exception('This tournament has not had its first draw yet.');
@@ -304,8 +348,13 @@ class FirestoreService {
     if (currentMatches.any((m) => m.winnerMemberId == null)) {
       throw Exception('Not every match in the current round has been settled yet.');
     }
-    final nextRoundSize =
-        tournament.currentRoundSize == 0 ? tournament.mainBracketSize! : tournament.currentRoundSize! ~/ 2;
+    final winners = [
+      for (final m in currentMatches) (id: m.winnerMemberId!, name: m.winnerName ?? m.memberAName)
+    ]..shuffle();
+    final nextRoundSize = TournamentBracketEngine.nextRoundSizeFor(
+      remainingParticipants: winners.length,
+      targetMainBracketSize: tournament.mainBracketSize!,
+    );
     final alreadyDrawn = await fetchTournamentMatchesForRound(
       teamId: tournament.teamId,
       tournamentId: tournament.id!,
@@ -314,9 +363,6 @@ class FirestoreService {
     if (alreadyDrawn.isNotEmpty) {
       throw Exception('The next round has already been drawn.');
     }
-    final winners = [
-      for (final m in currentMatches) (id: m.winnerMemberId!, name: m.winnerName ?? m.memberAName)
-    ]..shuffle();
     final positions = await _leagueTablePositions(teamId: tournament.teamId, season: tournament.season);
     final matches = TournamentBracketEngine.buildNextRound(
       tournament: tournament,
@@ -493,9 +539,7 @@ class FirestoreService {
   /// Resolves any active challenge whose challenged leg has now settled
   /// (won/lost), same client-side-on-load pattern used for fine disputes.
   /// Also auto-accepts any still-pending challenge once its challenged
-  /// leg's kickoff has passed — an un-answered challenge is assumed
-  /// accepted once the game starts, not silently dropped. That transition
-  /// is silent (no notification), since nobody took a deliberate action.
+  /// leg's kickoff has passed.
   Future<List<Challenge>> fetchChallenges({required String teamId, required String season}) async {
     final snapshot = await _db.collection('challenges').where('teamId', isEqualTo: teamId).where('season', isEqualTo: season).get();
     final all = snapshot.docs.map((doc) => Challenge.fromMap(doc.id, doc.data())).toList();
@@ -640,7 +684,7 @@ class FirestoreService {
     return FixtureOddsCache.fromMap(snapshot.docs.first.id, snapshot.docs.first.data());
   }
 
-  Future<void> saveFixtureOddsCache(FixtureOddsCache cache) async {
+    Future<void> saveFixtureOddsCache(FixtureOddsCache cache) async {
     if (cache.id != null) {
       await _db.collection('fixtureOdds').doc(cache.id).set(cache.toMap());
     } else {
@@ -723,8 +767,7 @@ class FirestoreService {
     required List<AccumulatorLeg> legs,
     required List<GameWeek> gameWeeks,
     required List<Challenge> challenges,
-    Tournament? tournament,
-    List<TournamentMatch> tournamentMatches = const [],
+    List<({Tournament tournament, List<TournamentMatch> matches})> tournaments = const [],
   }) async {
     final table = ScoringEngine.buildLeagueTable(
       members: members,
@@ -742,20 +785,37 @@ class FirestoreService {
       final entry = table[i];
       final stats = statsById[entry.memberId];
 
-      String? cupResult;
-      if (tournament != null && tournamentMatches.isNotEmpty) {
-        final memberMatches = tournamentMatches
+      // A member may have taken part in more than one tournament this
+      // season now that a team can run several at once — collect a
+      // result per tournament they actually played in (a bye-only
+      // "phantom" appearance doesn't count as participation, same as
+      // the original single-tournament check).
+      final cupResultsForMember = <({String name, String result})>[];
+      for (final entryT in tournaments) {
+        final matches = entryT.matches;
+        if (matches.isEmpty) continue;
+        final memberMatches = matches
             .where((m) => !m.isBye && (m.memberAId == entry.memberId || m.memberBId == entry.memberId))
             .toList();
-        if (memberMatches.isNotEmpty) {
-          final finalMatch = tournamentMatches.where((m) => m.roundSize == 2).firstOrNull;
-          if (finalMatch?.winnerMemberId == entry.memberId) {
-            cupResult = 'Champion 🏆';
-          } else {
-            final deepest = memberMatches.reduce((a, b) => a.roundSize < b.roundSize ? a : b);
-            cupResult = 'Reached the ${tournamentRoundLabel(deepest.roundSize)}';
-          }
-        }
+        if (memberMatches.isEmpty) continue;
+        final finalMatch = matches.where((m) => m.roundSize == 2).firstOrNull;
+        final result = finalMatch?.winnerMemberId == entry.memberId
+            ? 'Champion 🏆'
+            : 'Reached the ${tournamentRoundLabel(memberMatches.reduce((a, b) => a.roundSize < b.roundSize ? a : b).roundSize)}';
+        cupResultsForMember.add((name: entryT.tournament.name, result: result));
+      }
+
+      // Exactly one tournament: identical output to the original
+      // single-tournament behaviour. More than one: combined into a
+      // single self-describing string, since cupName/cupResult can't
+      // hold two separate tournament names as-is.
+      String? cupName;
+      String? cupResult;
+      if (cupResultsForMember.length == 1) {
+        cupName = cupResultsForMember.first.name;
+        cupResult = cupResultsForMember.first.result;
+      } else if (cupResultsForMember.length > 1) {
+        cupResult = cupResultsForMember.map((c) => '${c.name}: ${c.result}').join('; ');
       }
 
       String? biggestWinDesc;
@@ -807,7 +867,7 @@ class FirestoreService {
         longestWinStreak: entry.longestWinStreak,
         biggestWinDescription: biggestWinDesc,
         biggestWinOdds: entry.biggestWin?.decimalOddsAtSelection,
-        cupName: tournament?.name,
+        cupName: cupName,
         cupResult: cupResult,
         recommendations: recs,
         createdAt: DateTime.now(),
@@ -815,6 +875,8 @@ class FirestoreService {
       await createSeasonSummary(summary);
     }
   }
+
+ 
 
   Future<List<Reaction>> fetchReactionsForGameWeek({
     required String teamId,
@@ -1129,12 +1191,12 @@ class FirestoreService {
       recipientMemberIds: [for (final m in members) if (m.id != null) m.id!],
       type: NotificationType.gameweekLocked,
       title: '🔐 Gameweek locked 🔐',
-      body: 'Gameweek $weekNumber is locked in with ${OddsApiService.bookmakerDisplayNames[bookmaker] ?? bookmaker} — combined odds ${decimalToFractional(combinedOdds)}.',
+      body: 'Gameweek $weekNumber is locked in with ${OddsApiService.bookmakerDisplayNames[bookmaker] ?? bookmaker} — combined odds ${combinedOddsToFractional(combinedOdds)}.',
     );
     await resolveTournamentWalkovers(teamId: teamId, gameWeekId: gameWeekId);
   }
 
-  Future<void> resolveTournamentWalkovers({
+ Future<void> resolveTournamentWalkovers({
     required String teamId,
     required String gameWeekId,
   }) async {
@@ -1150,9 +1212,19 @@ class FirestoreService {
     if (matches.isEmpty) return;
 
     final legs = await fetchLegs(teamId);
-    final team = await fetchTeam(teamId);
-    final tournament = await fetchTournament(teamId: teamId, season: team?.season ?? '');
-    final tournamentName = tournament?.name ?? 'the tournament';
+    
+    // Which tournament this gameweek's walkovers belong to varies match
+    // by match now that a team can run several at once — each match
+    // already carries its own tournamentId, so look that up per match
+    // rather than assuming a single season-wide tournament.
+    final tournamentNameCache = <String, String>{};
+    Future<String> tournamentNameFor(String tournamentId) async {
+      if (tournamentNameCache.containsKey(tournamentId)) return tournamentNameCache[tournamentId]!;
+      final t = await fetchTournamentById(tournamentId);
+      final name = t?.name ?? 'the tournament';
+      tournamentNameCache[tournamentId] = name;
+      return name;
+    }
     final allMembers = await fetchMembers(teamId);
     final allMemberIds = [for (final m in allMembers) if (m.id != null) m.id!];
     final random = Random();
@@ -1193,6 +1265,7 @@ class FirestoreService {
       });
 
       if (isWalkover && loserName != null) {
+        final tournamentName = await tournamentNameFor(match.tournamentId);
         await sendNotification(
           teamId: teamId,
           recipientMemberIds: allMemberIds,
@@ -1286,7 +1359,7 @@ class FirestoreService {
     return legs.isNotEmpty && legs.every((l) => l.outcome != LegOutcome.pending);
   }
 
-  Future<void> endActiveGameWeek({required String teamId, required GameWeek gameWeek}) async {
+    Future<void> endActiveGameWeek({required String teamId, required GameWeek gameWeek}) async {
     if (gameWeek.id == null) return;
     await settleGameWeek(teamId: teamId, gameWeekId: gameWeek.id!);
     final team = await fetchTeam(teamId);
@@ -1299,6 +1372,7 @@ class FirestoreService {
     final challenges = await fetchChallenges(teamId: teamId, season: season);
     final table = ScoringEngine.buildLeagueTable(members: members, legs: seasonLegs, challenges: challenges);
     final gameWeekLegs = seasonLegs.where((l) => l.gameWeekId == gameWeek.id && !l.isSecondaryTournamentLeg).toList();
+    // ...rest of the method continues exactly as before...
     final teamWonCount = gameWeekLegs.where((l) => l.outcome == LegOutcome.won).length;
     final teamTotalCount = gameWeekLegs.length;
     final allWon = teamTotalCount > 0 && teamWonCount == teamTotalCount;

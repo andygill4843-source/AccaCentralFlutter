@@ -7,7 +7,7 @@ import 'app_state.dart';
 import 'profile_screen.dart';
 import 'notifications_screen.dart';
 import 'models.dart';
-import 'tournament_view.dart';
+import 'tournament_pager.dart';
 
 class LeagueTableTab extends StatefulWidget {
   final AppState appState;
@@ -73,6 +73,8 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
       final currentSeasonGameWeekIds = currentSeasonGameWeeks.map((g) => g.id).toSet();
       final currentSeasonLegs = legs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
       final challenges = await FirestoreService.instance.fetchChallenges(teamId: widget.teamId, season: team?.season ?? '');
+      // Current, live standing correctly includes every resolved challenge
+      // regardless of when it happened — this is meant to be "as of now".
       final currentEntries = ScoringEngine.buildLeagueTable(members: members, legs: currentSeasonLegs, challenges: challenges);
       final settledWeeks = currentSeasonGameWeeks.where((g) => g.isSettled).toList()
         ..sort((a, b) => a.weekNumber.compareTo(b.weekNumber));
@@ -81,7 +83,11 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
         final latestWeek = settledWeeks.last;
         final previousGameWeekIds = settledWeeks.where((g) => g.weekNumber < latestWeek.weekNumber).map((g) => g.id).toSet();
         final previousLegs = currentSeasonLegs.where((l) => previousGameWeekIds.contains(l.gameWeekId)).toList();
-        final previousEntries = ScoringEngine.buildLeagueTable(members: members, legs: previousLegs, challenges: challenges);
+        // Challenges scoped to the same gameweek window as the legs — a
+        // challenge that only resolved in a LATER week must not inject
+        // its bonus points into this earlier snapshot.
+        final previousChallenges = challenges.where((c) => previousGameWeekIds.contains(c.gameWeekId)).toList();
+        final previousEntries = ScoringEngine.buildLeagueTable(members: members, legs: previousLegs, challenges: previousChallenges);
         final Map<String, int> previousPosition = {
           for (int i = 0; i < previousEntries.length; i++) previousEntries[i].memberId: i + 1,
         };
@@ -100,7 +106,10 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
       for (final week in settledWeeks) {
         final upToWeekIds = settledWeeks.where((g) => g.weekNumber <= week.weekNumber).map((g) => g.id).toSet();
         final legsUpToWeek = currentSeasonLegs.where((l) => upToWeekIds.contains(l.gameWeekId)).toList();
-        history[week.weekNumber] = ScoringEngine.buildLeagueTable(members: members, legs: legsUpToWeek, challenges: challenges);
+        // Same fix as above — only include challenges tied to a
+        // gameweek that's actually part of this snapshot's window.
+        final challengesUpToWeek = challenges.where((c) => upToWeekIds.contains(c.gameWeekId)).toList();
+        history[week.weekNumber] = ScoringEngine.buildLeagueTable(members: members, legs: legsUpToWeek, challenges: challengesUpToWeek);
       }
       setState(() {
         entries = currentEntries;
@@ -183,7 +192,11 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
               onRefresh: load,
               child: _viewMode == _LeagueTableViewMode.cup
                   ? SingleChildScrollView(
-                      child: TournamentView(appState: widget.appState, teamId: widget.teamId),
+                      child: TournamentPager(
+                        appState: widget.appState,
+                        teamId: widget.teamId,
+                        season: currentSeason ?? '',
+                      ),
                     )
                   : isLoading
                       ? const Center(child: CircularProgressIndicator())

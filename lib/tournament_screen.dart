@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'app_state.dart';
 import 'firestore_service.dart';
+import 'models.dart';
 import 'main.dart'; // for AccaColors
-import 'tournament_view.dart';
+import 'tournament_pager.dart';
+import 'create_tournament_screen.dart';
 
-/// Thin Scaffold wrapper around TournamentView, for direct navigation
-/// (e.g. Acca Hub's "Tournament" button). LeagueTableTab embeds
-/// TournamentView directly instead, inside its own League/Cup toggle.
 class TournamentScreen extends StatefulWidget {
   final AppState appState;
   final String teamId;
@@ -16,35 +15,67 @@ class TournamentScreen extends StatefulWidget {
 }
 
 class _TournamentScreenState extends State<TournamentScreen> {
-  String? tournamentName;
+  final GlobalKey<TournamentPagerState> _pagerKey = GlobalKey();
+  bool isManager = false;
+  String? season;
+  String title = 'Tournament';
 
   @override
   void initState() {
     super.initState();
-    _loadName();
+    loadManagerStatusAndSeason();
   }
 
-  Future<void> _loadName() async {
+  Future<void> loadManagerStatusAndSeason() async {
+    final userId = widget.appState.currentUser?.id;
+    if (userId != null) {
+      final member = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
+      if (mounted) setState(() => isManager = member?.role == MemberRole.manager);
+    }
     final team = await FirestoreService.instance.fetchTeam(widget.teamId);
-    final tournament = await FirestoreService.instance.fetchTournament(
-      teamId: widget.teamId,
-      season: team?.season ?? '',
+    if (mounted) setState(() => season = team?.season ?? '');
+  }
+
+  Future<void> openCreateScreen() async {
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => CreateTournamentScreen(teamId: widget.teamId)),
     );
-    if (mounted) setState(() => tournamentName = tournament?.name);
+    if (created == true) _pagerKey.currentState?.load();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(tournamentName ?? 'Tournament'),
+        title: Text(title),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
+        actions: [
+          if (isManager)
+            IconButton(
+              icon: const Icon(Icons.add),
+              tooltip: 'Set up a tournament',
+              onPressed: openCreateScreen,
+            ),
+        ],
       ),
       backgroundColor: AccaColors.background,
-      body: SingleChildScrollView(
-        child: TournamentView(appState: widget.appState, teamId: widget.teamId),
-      ),
+      body: season == null
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              child: TournamentPager(
+                key: _pagerKey,
+                appState: widget.appState,
+                teamId: widget.teamId,
+                season: season!,
+                onTournamentsChanged: (tournaments, currentPage) {
+                  final newTitle = tournaments.isNotEmpty && currentPage < tournaments.length
+                      ? tournaments[currentPage].name
+                      : 'Tournament';
+                  if (newTitle != title && mounted) setState(() => title = newTitle);
+                },
+              ),
+            ),
     );
   }
 }
