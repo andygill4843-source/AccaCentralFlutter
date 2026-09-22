@@ -95,6 +95,13 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     if (mounted) setState(() => isLoading = false);
   }
 
+  /// Decides which screen to show for "Pick selection" — CurrentLegScreen
+  /// (with its "revise selection" option) if the member already has a
+  /// leg for this gameweek, SubmitLegScreen otherwise. For a gameweek
+  /// that's also an active tournament round, the member needs BOTH a
+  /// primary and a secondary pick instead of a single leg, handled by
+  /// the tournament branch below before falling through to the normal
+  /// single-leg flow.
   Future<void> openSubmitLeg() async {
     final gameWeek = activeGameWeek;
     if (gameWeek == null || gameWeek.id == null) {
@@ -157,6 +164,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
               windowEnd: gameWeek.endDate,
               tournamentMatchId: matchId,
               isSecondaryTournamentLeg: false,
+              allowedBetTypes: gameWeek.managerSpecialBetTypes,
             ),
           ),
         );
@@ -171,6 +179,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
               windowEnd: gameWeek.endDate,
               tournamentMatchId: matchId,
               isSecondaryTournamentLeg: true,
+              allowedBetTypes: gameWeek.managerSpecialBetTypes,
             ),
           ),
         );
@@ -187,6 +196,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
               windowEnd: gameWeek.endDate,
               tournamentMatchId: matchId,
               isSecondaryTournamentLeg: true,
+              allowedBetTypes: gameWeek.managerSpecialBetTypes,
             ),
           ),
         );
@@ -226,6 +236,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
             teamId: widget.teamId,
             windowStart: gameWeek.startDate,
             windowEnd: gameWeek.endDate,
+            allowedBetTypes: gameWeek.managerSpecialBetTypes,
           ),
         ),
       );
@@ -238,6 +249,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
             teamId: widget.teamId,
             windowStart: gameWeek.startDate,
             windowEnd: gameWeek.endDate,
+            allowedBetTypes: gameWeek.managerSpecialBetTypes,
           ),
         ),
       );
@@ -251,7 +263,7 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
       return;
     }
     await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => LiveAccumulatorScreen(gameWeek: activeGameWeek!)),
+      MaterialPageRoute(builder: (_) => LiveAccumulatorScreen(appState: widget.appState, gameWeek: activeGameWeek!)),
     );
   }
 

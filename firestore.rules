@@ -74,6 +74,16 @@ service cloud.firestore {
       allow create: if isTeamManager(request.resource.data.teamId);
       allow update, delete: if false;
     }
+    match /liveNotificationMutes/{docId} {
+      allow read: if isMemberOfTeam(resource.data.teamId);
+      allow create: if isSignedIn()
+        && ownsMemberDoc(request.resource.data.memberId)
+        && isMemberOfTeam(request.resource.data.teamId);
+      allow update: if isSignedIn()
+        && ownsMemberDoc(resource.data.memberId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mutedCategories']);
+      allow delete: if false;
+    }
     match /seasonSettings/{settingsId} {
       allow read: if !exists(/databases/$(database)/documents/seasonSettings/$(settingsId)) || isMemberOfTeam(resource.data.teamId);
       allow create: if isTeamManager(request.resource.data.teamId);

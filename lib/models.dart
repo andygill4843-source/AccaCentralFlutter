@@ -136,6 +136,10 @@ class GameWeek {
   final DateTime createdAt;
   final DateTime deadline;
   final String season;
+  /// Null or empty = a normal gameweek, any bet type allowed. Non-empty =
+  /// a "manager special" — members may only submit legs of one of these
+  /// bet types this week.
+  final List<BetType>? managerSpecialBetTypes;
   GameWeek({
     this.id,
     required this.teamId,
@@ -149,8 +153,12 @@ class GameWeek {
     DateTime? createdAt,
     DateTime? deadline,
     required this.season,
+    this.managerSpecialBetTypes,
   })  : createdAt = createdAt ?? startDate,
         deadline = deadline ?? startDate;
+
+  bool get isManagerSpecial => managerSpecialBetTypes != null && managerSpecialBetTypes!.isNotEmpty;
+
   factory GameWeek.fromMap(String id, Map<String, dynamic> map) {
     return GameWeek(
       id: id,
@@ -165,6 +173,9 @@ class GameWeek {
       createdAt: (map['createdAt'] as dynamic)?.toDate(),
       deadline: (map['deadline'] as dynamic)?.toDate(),
       season: map['season'] ?? 'Unknown Season',
+      managerSpecialBetTypes: (map['managerSpecialBetTypes'] as List?)
+          ?.map((v) => BetTypeValue.fromDisplayName(v as String))
+          .toList(),
     );
   }
   Map<String, dynamic> toMap() {
@@ -179,6 +190,7 @@ class GameWeek {
       'isLocked': isLocked,
       'deadline': deadline,
       'season': season,
+      'managerSpecialBetTypes': managerSpecialBetTypes?.map((t) => t.displayName).toList(),
     };
   }
 }
@@ -931,6 +943,61 @@ class AppNotification {
     };
   }
 }
+
+// ============================================================
+// LIVE NOTIFICATION MUTES
+// ============================================================
+/// Per-member, per-fixture mute preferences for live match notifications,
+/// set from the live scores screen. Muting a category affects
+/// notifications about ANY leg on that fixture — not just the member's
+/// own — since the mute is scoped to the match, not to a specific leg.
+class LiveNotificationMute {
+  final String? id;
+  final String teamId;
+  final String memberId;
+  final int apiFootballFixtureId;
+  final Map<String, bool> mutedCategories;
+
+  static const String categoryGoals = 'goals'; // includes VAR corrections
+  static const String categoryCards = 'cards'; // yellow + red
+  static const String categorySubs = 'subs';
+  static const String categorySettlement = 'settlement'; // final score / leg won-lost
+
+  static const List<(String key, String label)> allCategories = [
+    (categoryGoals, 'Goals / VAR corrections'),
+    (categoryCards, 'Cards (yellow/red)'),
+    (categorySubs, 'Substitutions'),
+    (categorySettlement, 'Final score / settlement'),
+  ];
+
+  LiveNotificationMute({
+    this.id,
+    required this.teamId,
+    required this.memberId,
+    required this.apiFootballFixtureId,
+    this.mutedCategories = const {},
+  });
+
+  bool isMuted(String category) => mutedCategories[category] == true;
+
+  factory LiveNotificationMute.fromMap(String id, Map<String, dynamic> map) {
+    return LiveNotificationMute(
+      id: id,
+      teamId: map['teamId'],
+      memberId: map['memberId'],
+      apiFootballFixtureId: map['apiFootballFixtureId'] as int,
+      mutedCategories: Map<String, bool>.from(map['mutedCategories'] ?? {}),
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+    'teamId': teamId,
+    'memberId': memberId,
+    'apiFootballFixtureId': apiFootballFixtureId,
+    'mutedCategories': mutedCategories,
+  };
+}
+
 // ============================================================
 // YELLOW CARDS
 // ============================================================

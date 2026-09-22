@@ -25,6 +25,12 @@ const BASE_URL = 'https://v3.football.api-sports.io';
 
 const EARLY_SETTLEMENT_STATUSES = new Set(['1H', 'HT', '2H', 'ET', 'FT', 'LIVE']);
 
+// Mirrors LiveNotificationMute in models.dart. Muting is per fixture,
+// per member, and affects notifications about ANY leg on that fixture.
+function isMutedForCategory(mutedCategoriesByMember, memberId, category) {
+  return mutedCategoriesByMember[memberId]?.has(category) ?? false;
+}
+
 // ── Full-time settlement logic (mirrors settlement_engine.dart) ────────────
 
 function isCurrentlyWinning(leg, homeGoals, awayGoals, homeTeam, awayTeam) {
@@ -250,30 +256,9 @@ function memberNameFor(membersSnap, memberId) {
   return memberDoc?.data()?.displayName ?? 'Someone';
 }
 
-// Finds the most recent 'Var'/'Goal cancelled' event in the fixture's
-// full event history (allEvents already covers the whole match, not just
-// this poll's new events) and formats it into a readable status string.
-// Used to explain WHAT was disallowed in a correction notification,
-// rather than just showing the resulting score. Falls back to null if
-// none is found (shouldn't normally happen when this is called, since a
-// won leg can only revert via a goal being taken off the board).
-function mostRecentGoalCancelledStatus(allEvents) {
-  const cancellations = allEvents
-    .filter(e => e.type === 'Var' && e.detail === 'Goal cancelled')
-    .sort((a, b) => a.time.elapsed - b.time.elapsed);
-  if (cancellations.length === 0) return null;
-  const latest = cancellations[cancellations.length - 1];
-  const playerName = latest.player?.name ?? '';
-  const playerPart = playerName ? ` (${playerName})` : '';
-  return `VAR — Goal cancelled: ${latest.team.name}${playerPart}`;
-}
+// ── Full-time / early settlement notifications — category 'settlement' ──
 
-// ── Full-time settlement notification ────────────────────────────────────
-// wonCountRef is shared with the early-settlement path below, so the
-// won/total count stays consistent regardless of whether a leg settled
-// mid-match or only resolved at full time.
-
-async function settleLegAndNotify({ leg, winning, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef }) {
+async function settleLegAndNotify({ leg, winning, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef, mutedCategoriesByMember }) {
   const newOutcome = winning ? 'won' : 'lost';
   await db.collection('legs').doc(leg.id).update({ outcome: newOutcome });
   if (winning) wonCountRef.count++;
@@ -281,6 +266,7 @@ async function settleLegAndNotify({ leg, winning, teamId, membersSnap, allMember
   const memberName = memberNameFor(membersSnap, leg.memberId);
 
   for (const memberId of allMemberIds) {
+    if (isMutedForCategory(mutedCategoriesByMember, memberId, 'settlement')) continue;
     const isOwn = memberId === leg.memberId;
     await sendNotification({
       teamId,
@@ -296,15 +282,13 @@ async function settleLegAndNotify({ leg, winning, teamId, membersSnap, allMember
   }
 }
 
-// ── Early (mid-match) settlement notifications — universal messages to
-// the whole team, keyed off legs won / total legs. ──────────────────────
-
-async function settleAsEarlyWinner({ leg, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef }) {
+async function settleAsEarlyWinner({ leg, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef, mutedCategoriesByMember }) {
   await db.collection('legs').doc(leg.id).update({ outcome: 'won' });
   wonCountRef.count++;
   const memberName = memberNameFor(membersSnap, leg.memberId);
 
   for (const memberId of allMemberIds) {
+    if (isMutedForCategory(mutedCategoriesByMember, memberId, 'settlement')) continue;
     await sendNotification({
       teamId,
       recipientMemberId: memberId,
@@ -315,21 +299,17 @@ async function settleAsEarlyWinner({ leg, teamId, membersSnap, allMemberIds, tot
   }
 }
 
-// Fires whenever a previously-WON leg is no longer won. Explains the
-// disallowed goal specifically (via allEvents) rather than just the score.
+// Fires whenever a previously-WON leg is no longer won — grouped under
+// 'goals' (not 'settlement'), since it's caused by a VAR reversal, not a
+// new settlement event.
 async function revertWonLegAndNotifyCorrection({
-  leg, newOutcome, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef, homeTeam, awayTeam, homeGoals, awayGoals, allEvents,
+  leg, newOutcome, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef, homeTeam, awayTeam, homeGoals, awayGoals, allEvents, mutedCategoriesByMember,
 }) {
   await db.collection('legs').doc(leg.id).update({ outcome: newOutcome });
   wonCountRef.count--;
   const memberName = memberNameFor(membersSnap, leg.memberId);
   const scoreLabel = `${homeTeam} ${homeGoals}-${awayGoals} ${awayTeam}`;
 
-  // Team the cancelled goal belonged to — pulled from the most recent
-  // 'Var'/'Goal cancelled' event in the fixture's full history. Falls
-  // back to a generic title if no such event is found for some reason
-  // (shouldn't normally happen, since a won leg can only revert via a
-  // goal being taken off the board).
   const cancellations = allEvents
     .filter(e => e.type === 'Var' && e.detail === 'Goal cancelled')
     .sort((a, b) => a.time.elapsed - b.time.elapsed);
@@ -342,6 +322,7 @@ async function revertWonLegAndNotifyCorrection({
     : `❌ CORRECTION: Goal disallowed`;
 
   for (const memberId of allMemberIds) {
+    if (isMutedForCategory(mutedCategoriesByMember, memberId, 'goals')) continue;
     await sendNotification({
       teamId,
       recipientMemberId: memberId,
@@ -352,8 +333,6 @@ async function revertWonLegAndNotifyCorrection({
   }
 }
 
-// First-time early loss and a lost-leg reverting to pending: silent,
-// Firestore-only — not covered by the requested notification behaviour.
 async function settleAsEarlyLossSilently(leg) {
   await db.collection('legs').doc(leg.id).update({ outcome: 'lost' });
 }
@@ -435,6 +414,20 @@ exports.liveMatchPoller = onSchedule(
         .get();
       const allMemberIds = membersSnap.docs.map(d => d.id);
 
+      // Every member's mute preferences for THIS fixture, keyed by
+      // memberId → Set of muted category strings.
+      const mutesSnap = await db.collection('liveNotificationMutes')
+        .where('apiFootballFixtureId', '==', fixtureId)
+        .get();
+      const mutedCategoriesByMember = {};
+      for (const doc of mutesSnap.docs) {
+        const d = doc.data();
+        const muted = new Set(
+          Object.entries(d.mutedCategories || {}).filter(([, v]) => v).map(([k]) => k)
+        );
+        mutedCategoriesByMember[d.memberId] = muted;
+      }
+
       const allGameWeekLegsSnap = await db.collection('legs')
         .where('gameWeekId', '==', gameWeekId)
         .where('teamId', '==', teamId)
@@ -461,13 +454,16 @@ exports.liveMatchPoller = onSchedule(
         for (const event of allEvents) {
           const rawType = event.type;
           const detail = event.detail || '';
+          const detailLower = detail.toLowerCase();
 
           const isGoal = rawType === 'Goal' && detail !== 'Missed Penalty';
-          const isRedCard = rawType === 'Card' && detail.toLowerCase() === 'red card';
+          const isRedCard = rawType === 'Card' && detailLower === 'red card';
+          const isYellowCard = rawType === 'Card' && detailLower === 'yellow card';
+          const isCard = isRedCard || isYellowCard;
           const isSubstitution = rawType === 'Subst';
           const isDisallowedGoal = rawType === 'Var' && detail === 'Goal cancelled';
 
-          if (!isGoal && !isRedCard && !isSubstitution && !isDisallowedGoal) continue;
+          if (!isGoal && !isCard && !isSubstitution && !isDisallowedGoal) continue;
 
           const elapsed = event.time.elapsed;
           const extra = event.time.extra ?? 0;
@@ -480,6 +476,7 @@ exports.liveMatchPoller = onSchedule(
           let eventDetail;
           let notifyEveryone;
           let eventKeyPart;
+          let category;
 
           if (isGoal) {
             const displayDetail = detail === 'Normal Goal' ? 'Goal' : detail;
@@ -488,13 +485,15 @@ exports.liveMatchPoller = onSchedule(
             emoji = '⚽';
             eventDetail = `${timeLabel} ${emoji} ${eventTeamName}${playerPart} — ${displayDetail}`;
             notifyEveryone = true;
+            category = 'goals';
             eventKeyPart = `${detail.replace(/ /g, '_')}_${playerName.replace(/ /g, '_')}`;
-          } else if (isRedCard) {
+          } else if (isCard) {
             const playerName = event.player?.name ?? '';
             const playerPart = playerName ? ` ${playerName}` : '';
-            emoji = '🟥';
-            eventDetail = `${timeLabel} ${emoji} ${eventTeamName}${playerPart} — Red Card`;
+            emoji = isRedCard ? '🟥' : '🟨';
+            eventDetail = `${timeLabel} ${emoji} ${eventTeamName}${playerPart} — ${isRedCard ? 'Red Card' : 'Yellow Card'}`;
             notifyEveryone = false;
+            category = 'cards';
             eventKeyPart = `${detail.replace(/ /g, '_')}_${playerName.replace(/ /g, '_')}`;
           } else if (isSubstitution) {
             const playerOff = event.player?.name ?? 'Player';
@@ -502,6 +501,7 @@ exports.liveMatchPoller = onSchedule(
             emoji = '🔄';
             eventDetail = `${timeLabel} ${emoji} ${eventTeamName} — ${playerOff} off, ${playerOn} on`;
             notifyEveryone = false;
+            category = 'subs';
             eventKeyPart = `${playerOff.replace(/ /g, '_')}_${playerOn.replace(/ /g, '_')}`;
           } else {
             const playerName = event.player?.name ?? '';
@@ -509,6 +509,7 @@ exports.liveMatchPoller = onSchedule(
             emoji = '🚫';
             eventDetail = `${timeLabel} ${emoji} ${eventTeamName}${playerPart} — Goal Disallowed`;
             notifyEveryone = true;
+            category = 'goals';
             eventKeyPart = `${detail.replace(/ /g, '_')}_${playerName.replace(/ /g, '_')}`;
           }
 
@@ -529,6 +530,7 @@ exports.liveMatchPoller = onSchedule(
 
           if (notifyEveryone) {
             for (const memberId of allMemberIds) {
+              if (isMutedForCategory(mutedCategoriesByMember, memberId, category)) continue;
               await sendNotification({
                 teamId,
                 recipientMemberId: memberId,
@@ -539,6 +541,7 @@ exports.liveMatchPoller = onSchedule(
             }
           } else {
             for (const memberId of ownMemberIds) {
+              if (isMutedForCategory(mutedCategoriesByMember, memberId, category)) continue;
               await sendNotification({
                 teamId,
                 recipientMemberId: memberId,
@@ -558,13 +561,13 @@ exports.liveMatchPoller = onSchedule(
             if (result === currentAsBool) continue;
 
             if (result === true) {
-              await settleAsEarlyWinner({ leg, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef });
+              await settleAsEarlyWinner({ leg, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef, mutedCategoriesByMember });
             } else if (currentAsBool === true) {
               await revertWonLegAndNotifyCorrection({
                 leg,
                 newOutcome: result === false ? 'lost' : 'pending',
                 teamId, membersSnap, allMemberIds, totalLegs, wonCountRef,
-                homeTeam, awayTeam, homeGoals, awayGoals, allEvents,
+                homeTeam, awayTeam, homeGoals, awayGoals, allEvents, mutedCategoriesByMember,
               });
             } else if (result === false) {
               await settleAsEarlyLossSilently(leg);
@@ -588,6 +591,7 @@ exports.liveMatchPoller = onSchedule(
             allMemberIds,
             totalLegs,
             wonCountRef,
+            mutedCategoriesByMember,
           });
         }
       }

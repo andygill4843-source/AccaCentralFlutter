@@ -5,14 +5,19 @@ import 'main.dart';
 import 'odds_format.dart';
 import 'api_football_service.dart';
 import 'odds_orchestrator.dart';
+import 'fixture_card.dart';
+import 'scout_tab.dart';
+import 'lineup_tab.dart';
+
 class PickOutcomeScreen extends StatefulWidget {
   final ApiFootballFixture fixture;
-  final String leagueKey;    // e.g. 'soccer_epl' — needed for The Odds API call
+  final String leagueKey;
   final String gameWeekId;
   final String memberId;
   final String teamId;
   final String? tournamentMatchId;
   final bool isSecondaryTournamentLeg;
+  final List<BetType>? allowedBetTypes;
   const PickOutcomeScreen({
     super.key,
     required this.fixture,
@@ -22,10 +27,12 @@ class PickOutcomeScreen extends StatefulWidget {
     required this.teamId,
     this.tournamentMatchId,
     this.isSecondaryTournamentLeg = false,
+    this.allowedBetTypes,
   });
   @override
   State<PickOutcomeScreen> createState() => _PickOutcomeScreenState();
 }
+
 class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
   FixtureOddsCache? oddsCache;
   bool isLoading = true;
@@ -34,11 +41,14 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
   final Map<String, bool> _expanded = {};
   int? _selectedHomeScore;
   int? _selectedAwayScore;
+  int _selectedTabIndex = 0;
+
   @override
   void initState() {
     super.initState();
     loadOdds();
   }
+
   Future<void> loadOdds() async {
     try {
       final cache = await OddsOrchestrator.instance.fetchOrCache(
@@ -62,11 +72,10 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       });
     }
   }
-  // ── Market helpers ────────────────────────────────────────────────────────
+
   BetType _mapBetType(String marketName, {String? value}) {
     final n = marketName.toLowerCase();
     if (n.contains('btts') && n.contains('goals')) {
-      // Combo market — BetType depends on the selected value, not just market name.
       final v = (value ?? '').toLowerCase();
       if (v.contains('yes') && v.contains('over'))  { return BetType.bttsYesOverCombo; }
       if (v.contains('yes') && v.contains('under')) { return BetType.bttsYesUnderCombo; }
@@ -85,6 +94,7 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     if (n.contains('goalscorer') || n.contains('anytime')) { return BetType.anytimeScorer; }
     return BetType.other;
   }
+
   int _marketPriority(String marketName) {
     final n = marketName.toLowerCase();
     if (n.contains('match winner')) { return 0; }
@@ -98,9 +108,36 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     if (n.contains('alternate totals')) { return 8; }
     return 99;
   }
+
+  bool get isManagerSpecial => widget.allowedBetTypes != null && widget.allowedBetTypes!.isNotEmpty;
+
+  bool _isOutcomeAllowedForManagerSpecial(String marketName, BetType type) {
+    if (!isManagerSpecial) return true;
+    if (!widget.allowedBetTypes!.contains(type)) return false;
+    if (type == BetType.overUnderGoals && marketName.toLowerCase().contains('alternate')) {
+      return false;
+    }
+    return true;
+  }
+
+  bool _marketHasAnyAllowedOutcome(String marketName, List<Map<String, dynamic>> outcomes) {
+    if (!isManagerSpecial) return true;
+    if (_mapBetType(marketName) == BetType.correctScore) {
+      return _isOutcomeAllowedForManagerSpecial(marketName, BetType.correctScore);
+    }
+    for (final o in outcomes) {
+      final t = _mapBetType(marketName, value: o['value'] as String);
+      if (_isOutcomeAllowedForManagerSpecial(marketName, t)) return true;
+    }
+    return false;
+  }
+
   List<MapEntry<String, List<Map<String, dynamic>>>> _orderedMarkets() {
     if (oddsCache == null) return [];
-    final entries = oddsCache!.bestOdds.entries.toList();
+    var entries = oddsCache!.bestOdds.entries.toList();
+    if (isManagerSpecial) {
+      entries = entries.where((e) => _marketHasAnyAllowedOutcome(e.key, e.value)).toList();
+    }
     entries.sort((a, b) {
       final pa = _marketPriority(a.key);
       final pb = _marketPriority(b.key);
@@ -108,6 +145,7 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     });
     return entries;
   }
+
   String _formatPickLabel(String value, String? line, BetType betType, String marketName) {
     final base = (line != null && !value.toLowerCase().contains(line.toLowerCase()))
         ? '$value $line'
@@ -126,7 +164,7 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     if (betType == BetType.overUnderGoals) return '$base Game Goals';
     return base;
   }
-  // ── Submission ────────────────────────────────────────────────────────────
+
   Future<void> submit({
     required String value,
     required double bestOdd,
@@ -139,14 +177,11 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
     final pickLabel = _formatPickLabel(value, line, betType, marketName);
     final selectionDescription =
         '$pickLabel — ${widget.fixture.homeTeam} vs ${widget.fixture.awayTeam}';
-    // Collect per-bookmaker prices for this market+value for the manager's
-    // combined odds screen.
     final bookmakerPrices = <String, double>{};
     for (final bmKey in OddsOrchestrator.allBookmakers) {
       final price = oddsCache!.bookmakerOddFor(bmKey, marketName, value);
       if (price != null && price > 0) bookmakerPrices[bmKey] = price;
     }
-    // Best bookmaker for this specific outcome.
     final bestBookmaker = bookmakerPrices.isNotEmpty
         ? bookmakerPrices.entries.reduce((a, b) => a.value > b.value ? a : b).key
         : '';
@@ -188,16 +223,12 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       setState(() { isSubmitting = false; errorMessage = e.toString(); });
     }
   }
-  // ── Correct score special handling ────────────────────────────────────────
+
   Future<void> submitCorrectScore({required String marketName}) async {
     if (_selectedHomeScore == null || _selectedAwayScore == null) return;
-    // API Football returns scores as "1:0" (colon); normalise both sides
-    // to hyphen format for comparison.
     String normaliseScore(String s) =>
         s.replaceAll(':', '-').replaceAll(' ', '').trim();
     final selectedValue = '$_selectedHomeScore-$_selectedAwayScore';
-    // The market may be stored as "Exact Score" (API Football) or
-    // "Correct Score" (other sources) — check both.
     final market = oddsCache?.bestOdds[marketName] ??
         oddsCache?.bestOdds['Correct Score'] ??
         oddsCache?.bestOdds['Exact Score'];
@@ -221,7 +252,7 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       marketName: marketName,
     );
   }
-  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -232,48 +263,163 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
         foregroundColor: Colors.white,
       ),
       backgroundColor: AccaColors.background,
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : errorMessage != null && oddsCache == null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(errorMessage!, style: const TextStyle(color: Colors.red)),
-                        const SizedBox(height: 16),
-                        ElevatedButton(onPressed: loadOdds, child: const Text('Retry')),
-                      ],
-                    ),
-                  ),
-                )
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    if (errorMessage != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Text(errorMessage!,
-                            style: const TextStyle(color: Colors.orange)),
-                      ),
-                    for (final entry in _orderedMarkets()) ...[
-                      _marketSection(entry.key, entry.value),
-                      const SizedBox(height: 12),
-                    ],
-                    if (isSubmitting)
-                      const Center(child: CircularProgressIndicator()),
-                  ],
-                ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: FixtureHeaderCard(
+              fixtureId: widget.fixture.id,
+              homeLogo: widget.fixture.homeLogo,
+              awayLogo: widget.fixture.awayLogo,
+              homeName: widget.fixture.homeTeam,
+              awayName: widget.fixture.awayTeam,
+              isLive: widget.fixture.isLive,
+              roundAllCorners: true,
+              centerContent: widget.fixture.isNotStarted
+                  ? _kickoffCenter(widget.fixture)
+                  : _liveCenter(widget.fixture),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: _tabBar(),
+          ),
+          Expanded(child: _tabBody()),
+        ],
+      ),
     );
   }
+
+  Widget _kickoffCenter(ApiFootballFixture f) {
+    final local = f.kickoff.toLocal();
+    final dateStr = '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}';
+    final timeStr = '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        fixtureStatusChip(dateStr),
+        const SizedBox(height: 6),
+        Text(timeStr, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+      ],
+    );
+  }
+
+  Widget _liveCenter(ApiFootballFixture f) {
+    final topLabel = f.isLive ? f.halfLabel : (f.isFinished ? 'FT' : f.statusLabel);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        fixtureStatusChip(topLabel),
+        const SizedBox(height: 6),
+        Text(f.scoreDisplay, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+      ],
+    );
+  }
+
+  Widget _tabBar() {
+    const labels = ['Selections', 'Scout', 'Line up'];
+    return Row(
+      children: [
+        for (var i = 0; i < labels.length; i++)
+          Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _selectedTabIndex = i),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: _selectedTabIndex == i ? AccaColors.gold : const Color(0xFF23232E),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  labels[i],
+                  style: TextStyle(
+                    color: _selectedTabIndex == i ? AccaColors.primary : Colors.white70,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _tabBody() {
+    switch (_selectedTabIndex) {
+      case 1:
+        return ScoutTab(fixtureId: widget.fixture.id);
+      case 2:
+        return LineupTab(
+          fixtureId: widget.fixture.id,
+          homeTeamName: widget.fixture.homeTeam,
+          awayTeamName: widget.fixture.awayTeam,
+        );
+      default:
+        return _selectionsBody();
+    }
+  }
+
+  Widget _selectionsBody() {
+    if (isLoading) return const Center(child: CircularProgressIndicator());
+    if (errorMessage != null && oddsCache == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(errorMessage!, style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 16),
+              ElevatedButton(onPressed: loadOdds, child: const Text('Retry')),
+            ],
+          ),
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (isManagerSpecial)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(color: AccaColors.gold, borderRadius: BorderRadius.circular(8)),
+            child: Text(
+              "Manager special: ${widget.allowedBetTypes!.map((t) => t.displayName).join(' / ')} only this week 👩‍💼👨‍💼",
+              style: const TextStyle(color: AccaColors.primary, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ),
+        if (errorMessage != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(errorMessage!, style: const TextStyle(color: Colors.orange)),
+          ),
+        for (final entry in _orderedMarkets()) ...[
+          _marketSection(entry.key, entry.value),
+          const SizedBox(height: 12),
+        ],
+        if (isSubmitting) const Center(child: CircularProgressIndicator()),
+      ],
+    );
+  }
+
   Widget _marketSection(String marketName, List<Map<String, dynamic>> outcomes) {
     final betType = _mapBetType(marketName);
     if (betType == BetType.correctScore) {
       return _correctScoreSection(marketName);
     }
     final isExpanded = _expanded[marketName] ?? _marketPriority(marketName) < 5;
-    final display = outcomes.where((o) => (o['odd'] as num).toDouble() > 0).toList();
+    var display = outcomes.where((o) => (o['odd'] as num).toDouble() > 0).toList();
+    if (isManagerSpecial) {
+      display = display.where((o) {
+        final t = _mapBetType(marketName, value: o['value'] as String);
+        return _isOutcomeAllowedForManagerSpecial(marketName, t);
+      }).toList();
+    }
     display.sort((a, b) {
       final aVal = a['value'] as String;
       final bVal = b['value'] as String;
@@ -297,13 +443,9 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
                 children: [
                   Expanded(
                     child: Text(marketName,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: Colors.black)),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black)),
                   ),
-                  Icon(isExpanded ? Icons.expand_less : Icons.expand_more,
-                      color: Colors.black54),
+                  Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.black54),
                 ],
               ),
             ),
@@ -327,6 +469,7 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       ),
     );
   }
+
   Widget _outcomeRow({
     required String value,
     required double odd,
@@ -348,29 +491,18 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
           children: [
-            Expanded(
-              child: Text(label,
-                  style: const TextStyle(fontSize: 14, color: Colors.black)),
-            ),
+            Expanded(child: Text(label, style: const TextStyle(fontSize: 14, color: Colors.black))),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: AccaColors.gold,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                decimalToFractional(odd),
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                    color: Colors.black),
-              ),
+              decoration: BoxDecoration(color: AccaColors.gold, borderRadius: BorderRadius.circular(6)),
+              child: Text(decimalToFractional(odd), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black)),
             ),
           ],
         ),
       ),
     );
   }
+
   Widget _correctScoreSection(String marketName) {
     return Container(
       decoration: BoxDecoration(
@@ -382,20 +514,12 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Correct Score',
-              style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: Colors.black)),
+          const Text('Correct Score', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black)),
           const SizedBox(height: 12),
           Row(
             children: [
               Expanded(child: _scorePicker(widget.fixture.homeTeam, true)),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Text('–',
-                    style: TextStyle(fontSize: 18, color: Colors.black)),
-              ),
+              const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text('–', style: TextStyle(fontSize: 18, color: Colors.black))),
               Expanded(child: _scorePicker(widget.fixture.awayTeam, false)),
             ],
           ),
@@ -403,15 +527,10 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: (_selectedHomeScore != null &&
-                      _selectedAwayScore != null &&
-                      !isSubmitting)
+              onPressed: (_selectedHomeScore != null && _selectedAwayScore != null && !isSubmitting)
                   ? () => submitCorrectScore(marketName: marketName)
                   : null,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AccaColors.gold,
-                foregroundColor: Colors.black,
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: AccaColors.gold, foregroundColor: Colors.black),
               child: const Text('Select this score'),
             ),
           ),
@@ -419,22 +538,20 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
       ),
     );
   }
+
   Widget _scorePicker(String teamName, bool isHome) {
     final selected = isHome ? _selectedHomeScore : _selectedAwayScore;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Text(teamName,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12, color: Colors.black54)),
+        Text(teamName, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: Colors.black54)),
         const SizedBox(height: 4),
         DropdownButton<int>(
           value: selected,
           hint: const Text('Goals', style: TextStyle(color: Colors.black54)),
           dropdownColor: Colors.white,
           style: const TextStyle(color: Colors.black),
-          items: [for (int i = 0; i <= 10; i++)
-            DropdownMenuItem(value: i, child: Text('$i'))],
+          items: [for (int i = 0; i <= 10; i++) DropdownMenuItem(value: i, child: Text('$i'))],
           onChanged: (v) => setState(() {
             if (isHome) { _selectedHomeScore = v; } else { _selectedAwayScore = v; }
           }),

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'api_football_service.dart';
 import 'pick_outcome_screen.dart';
+import 'models.dart';
+import 'fixture_card.dart';
 import 'main.dart';
 
 class SubmitLegScreen extends StatefulWidget {
@@ -11,6 +13,7 @@ class SubmitLegScreen extends StatefulWidget {
   final DateTime windowEnd;
   final String? tournamentMatchId;
   final bool isSecondaryTournamentLeg;
+  final List<BetType>? allowedBetTypes;
 
   const SubmitLegScreen({
     super.key,
@@ -21,6 +24,7 @@ class SubmitLegScreen extends StatefulWidget {
     required this.windowEnd,
     this.tournamentMatchId,
     this.isSecondaryTournamentLeg = false,
+    this.allowedBetTypes,
   });
 
   @override
@@ -28,10 +32,6 @@ class SubmitLegScreen extends StatefulWidget {
 }
 
 class _SubmitLegScreenState extends State<SubmitLegScreen> {
-  // ── League options ────────────────────────────────────────────────────────
-  // Keys are The Odds API league keys — these map to API Football IDs via
-  // ApiFootballService.leagueIds, and are also passed to PickOutcomeScreen
-  // so the orchestrator knows which Odds API endpoint to call.
   static const Map<String, String> _leagueOptions = {
     'soccer_epl':               'Premier League',
     'soccer_efl_champ':         'Championship',
@@ -51,7 +51,6 @@ class _SubmitLegScreenState extends State<SubmitLegScreen> {
     'July', 'August', 'September', 'October', 'November', 'December',
   ];
 
-  // ── State ─────────────────────────────────────────────────────────────────
   String selectedLeague = 'soccer_epl';
   List<ApiFootballFixture> fixtures = [];
   bool isLoading = false;
@@ -62,8 +61,6 @@ class _SubmitLegScreenState extends State<SubmitLegScreen> {
     super.initState();
     loadFixtures();
   }
-
-  // ── Load fixtures ─────────────────────────────────────────────────────────
 
   Future<void> loadFixtures() async {
     if (mounted) {
@@ -96,15 +93,11 @@ class _SubmitLegScreenState extends State<SubmitLegScreen> {
 
       final now = DateTime.now();
 
-      // Filter to:
-      //   1. Future only — can't pick a match that's already kicked off
-      //   2. Within the gameweek window by TIME, not just by date — this
-      //      prevents e.g. a 12:30 Saturday kick-off showing when the
-      //      window doesn't open until 3pm Saturday.
       final filtered = loaded.where((f) =>
         f.kickoff.isAfter(now) &&
         !f.kickoff.isBefore(widget.windowStart) &&
-        !f.kickoff.isAfter(widget.windowEnd)
+        !f.kickoff.isAfter(widget.windowEnd) &&
+        !f.isUnavailableForSelection
       ).toList();
 
       if (!mounted || selectedLeague != requestedLeague) return;
@@ -134,8 +127,6 @@ class _SubmitLegScreenState extends State<SubmitLegScreen> {
     await loadFixtures();
   }
 
-  // ── Group by day ──────────────────────────────────────────────────────────
-
   Map<DateTime, List<ApiFootballFixture>> _groupByDay(
     List<ApiFootballFixture> list,
   ) {
@@ -157,14 +148,21 @@ class _SubmitLegScreenState extends State<SubmitLegScreen> {
     return '$weekday, ${day.day} $month';
   }
 
-  String _formatTime(DateTime dt) {
-    final local = dt.toLocal();
-    return '${local.day}/${local.month} '
-        '${local.hour.toString().padLeft(2, '0')}:'
-        '${local.minute.toString().padLeft(2, '0')}';
+  /// Two-line date/time for the header's centre — replaces the score
+  /// box shown on the live screen, since this fixture hasn't kicked off.
+  Widget _kickoffCenter(ApiFootballFixture f) {
+    final local = f.kickoff.toLocal();
+    final dateStr = '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}';
+    final timeStr = '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        fixtureStatusChip(dateStr),
+        const SizedBox(height: 6),
+        Text(timeStr, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+      ],
+    );
   }
-
-  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -183,7 +181,6 @@ class _SubmitLegScreenState extends State<SubmitLegScreen> {
       backgroundColor: AccaColors.background,
       body: Column(
         children: [
-          // League selector
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -310,43 +307,57 @@ class _SubmitLegScreenState extends State<SubmitLegScreen> {
             ),
           ),
           for (final fixture in grouped[day]!)
-            Card(
-              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-              child: ListTile(
-                leading: const Icon(Icons.sports_soccer, color: Colors.white),
-                title: Text(
-                  '${fixture.homeTeam} vs ${fixture.awayTeam}',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 4),
-                    Text(fixture.leagueName,
-                        style: const TextStyle(fontWeight: FontWeight.w500)),
-                    const SizedBox(height: 2),
-                    Text(_formatTime(fixture.kickoff)),
-                  ],
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () async {
-                  final submitted = await Navigator.of(context).push<bool>(
-                    MaterialPageRoute(
-                      builder: (_) => PickOutcomeScreen(
-                        fixture: fixture,
-                        leagueKey: selectedLeague, // Odds API key
-                        gameWeekId: widget.gameWeekId,
-                        memberId: widget.memberId,
-                        teamId: widget.teamId,
-                        tournamentMatchId: widget.tournamentMatchId,
-                        isSecondaryTournamentLeg: widget.isSecondaryTournamentLeg,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+              child: Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(16),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () async {
+                    final submitted = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => PickOutcomeScreen(
+                          fixture: fixture,
+                          leagueKey: selectedLeague,
+                          gameWeekId: widget.gameWeekId,
+                          memberId: widget.memberId,
+                          teamId: widget.teamId,
+                          tournamentMatchId: widget.tournamentMatchId,
+                          isSecondaryTournamentLeg: widget.isSecondaryTournamentLeg,
+                          allowedBetTypes: widget.allowedBetTypes,
+                        ),
                       ),
-                    ),
-                  );
-                  if (submitted == true && mounted) {
-                    Navigator.of(context).pop(true);
-                  }
-                },
+                    );
+                    if (submitted == true && mounted) {
+                      Navigator.of(context).pop(true);
+                    }
+                  },
+                  child: Column(
+                    children: [
+                      FixtureHeaderCard(
+                        fixtureId: fixture.id,
+                        homeLogo: fixture.homeLogo,
+                        awayLogo: fixture.awayLogo,
+                        homeName: fixture.homeTeam,
+                        awayName: fixture.awayTeam,
+                        isLive: false,
+                        centerContent: _kickoffCenter(fixture),
+                      ),
+                      FixtureCardFooter(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: const [
+                              Icon(Icons.chevron_right, color: Colors.black45),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
         ],

@@ -27,6 +27,21 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
   bool isManager = false;
   List<Tournament> availableTournaments = []; // in-progress rounds not yet attached to any gameweek
   Tournament? selectedTournamentForLink;
+  bool isManagerSpecial = false;
+  Set<BetType> selectedSpecialBetTypes = {};
+
+  /// The only bet types selectable for a manager special — "Goals
+  /// Over/Under" here means the primary market specifically, not
+  /// "Alternate Totals" (both resolve to BetType.overUnderGoals, but
+  /// PickOutcomeScreen's filtering distinguishes them by market name —
+  /// see _isOutcomeAllowedForManagerSpecial there).
+  static const List<BetType> _managerSpecialOptions = [
+    BetType.matchWinner,
+    BetType.bothTeamsToScore,
+    BetType.overUnderGoals,
+    BetType.teamTotals,
+    BetType.bttsYesOverCombo,
+  ];
 
   @override
   void initState() {
@@ -62,7 +77,7 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
     if (team != null) await loadAvailableTournamentRound(team.season);
   }
 
-    /// Every in-progress tournament (there can now be several at once)
+  /// Every in-progress tournament (there can now be several at once)
   /// whose CURRENT round hasn't already been attached to a different
   /// gameweek — each one is a candidate to link this new gameweek to.
   Future<void> loadAvailableTournamentRound(String season) async {
@@ -130,6 +145,10 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       setState(() => errorMessage = "Gameweeks can only be set up within the next two weeks — bookmaker odds aren't posted further ahead than that.");
       return;
     }
+    if (isManagerSpecial && selectedSpecialBetTypes.isEmpty) {
+      setState(() => errorMessage = 'Select at least one bet type for the manager special.');
+      return;
+    }
     setState(() {
       errorMessage = null;
       isLoading = true;
@@ -153,9 +172,10 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
         createdAt: DateTime.now(),
         deadline: deadline,
         season: (await FirestoreService.instance.fetchTeam(teamId))?.season ?? '2026-27',
+        managerSpecialBetTypes: isManagerSpecial ? selectedSpecialBetTypes.toList() : null,
       );
       await FirestoreService.instance.createGameWeek(gameWeek);
-            if (selectedTournamentForLink?.id != null && selectedTournamentForLink?.currentRoundSize != null) {
+      if (selectedTournamentForLink?.id != null && selectedTournamentForLink?.currentRoundSize != null) {
         final newGameWeek = await FirestoreService.instance.fetchActiveGameWeek(teamId);
         if (newGameWeek?.id != null) {
           await FirestoreService.instance.attachTournamentRoundToGameWeek(
@@ -397,10 +417,8 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
       final seasonLegs = allLegs.where((l) => seasonGameWeekIds.contains(l.gameWeekId)).toList();
       final seasonGameWeeks = allGameWeeks.where((g) => g.season == team.season).toList();
       final allMembers = await FirestoreService.instance.fetchMembers(teamId);
-            // Fetch every tournament this season (a team can now run more than
-      // one at once) along with its own matches, so no cup result gets
-      // silently dropped just because it wasn't the first tournament
-      // created.
+      // Fetch every tournament this season (a team can now run more than
+      // one at once) along with its own matches.
       final seasonTournaments = await FirestoreService.instance.fetchTournaments(teamId: teamId, season: team.season);
       final tournamentsWithMatches = <({Tournament tournament, List<TournamentMatch> matches})>[];
       for (final t in seasonTournaments) {
@@ -554,6 +572,13 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
                           ),
                         ],
                       ),
+                      if (activeGameWeek!.isManagerSpecial) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          "Manager special: ${activeGameWeek!.managerSpecialBetTypes!.map((t) => t.displayName).join(' / ')} only",
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AccaColors.gold),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -622,6 +647,44 @@ class _GameWeekSetupScreenState extends State<GameWeekSetupScreen> {
                     setState(() => selectedTournamentForLink = result.tournament);
                   }
                 },
+              ),
+            ],
+            const SizedBox(height: 8),
+            SwitchListTile(
+              tileColor: AccaColors.surface,
+              title: const Text('Manager special?'),
+              subtitle: const Text('Restrict this gameweek to specific bet types only', style: TextStyle(fontSize: 12)),
+              value: isManagerSpecial,
+              onChanged: (v) => setState(() {
+                isManagerSpecial = v;
+                if (!v) selectedSpecialBetTypes = {};
+              }),
+            ),
+            if (isManagerSpecial) ...[
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(color: AccaColors.surface, borderRadius: BorderRadius.circular(8)),
+                child: Column(
+                  children: [
+                    for (final betType in _managerSpecialOptions)
+                      CheckboxListTile(
+                        value: selectedSpecialBetTypes.contains(betType),
+                        onChanged: (checked) {
+                          setState(() {
+                            if (checked == true) {
+                              selectedSpecialBetTypes.add(betType);
+                            } else {
+                              selectedSpecialBetTypes.remove(betType);
+                            }
+                          });
+                        },
+                        title: Text(betType.displayName, style: const TextStyle(fontSize: 13)),
+                        activeColor: AccaColors.gold,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        dense: true,
+                      ),
+                  ],
+                ),
               ),
             ],
             if (errorMessage != null) ...[

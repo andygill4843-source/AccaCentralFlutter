@@ -890,6 +890,68 @@ class FirestoreService {
     return snapshot.docs.map((d) => Reaction.fromMap(d.id, d.data())).toList();
   }
 
+  String _liveNotificationMuteDocId(String memberId, int apiFootballFixtureId) =>
+      '${memberId}_$apiFootballFixtureId';
+
+  /// This member's mute preferences for one fixture, or null if they
+  /// haven't muted anything for it.
+  Future<LiveNotificationMute?> fetchLiveNotificationMute({
+    required String memberId,
+    required int apiFootballFixtureId,
+  }) async {
+    final doc = await _db.collection('liveNotificationMutes')
+        .doc(_liveNotificationMuteDocId(memberId, apiFootballFixtureId))
+        .get();
+    if (!doc.exists) return null;
+    return LiveNotificationMute.fromMap(doc.id, doc.data()!);
+  }
+
+  /// This member's mute preferences across several fixtures at once — one
+  /// query instead of one per card on the live screen.
+  Future<Map<int, LiveNotificationMute>> fetchLiveNotificationMutesForMember({
+    required String teamId,
+    required String memberId,
+    required List<int> apiFootballFixtureIds,
+  }) async {
+    if (apiFootballFixtureIds.isEmpty) return {};
+    final result = <int, LiveNotificationMute>{};
+    // whereIn caps at 30 values — batched defensively even though a
+    // single gameweek's fixtures should never approach that.
+    for (var i = 0; i < apiFootballFixtureIds.length; i += 30) {
+      final batch = apiFootballFixtureIds.skip(i).take(30).toList();
+      final snapshot = await _db.collection('liveNotificationMutes')
+          .where('teamId', isEqualTo: teamId)
+          .where('memberId', isEqualTo: memberId)
+          .where('apiFootballFixtureId', whereIn: batch)
+          .get();
+      for (final doc in snapshot.docs) {
+        final mute = LiveNotificationMute.fromMap(doc.id, doc.data());
+        result[mute.apiFootballFixtureId] = mute;
+      }
+    }
+    return result;
+  }
+
+  /// Toggles one category for this member+fixture. Uses a merge write so
+  /// toggling one category never clobbers another already set on the
+  /// same document.
+  Future<void> setLiveNotificationMuteCategory({
+    required String teamId,
+    required String memberId,
+    required int apiFootballFixtureId,
+    required String category,
+    required bool muted,
+  }) async {
+    final docRef = _db.collection('liveNotificationMutes')
+        .doc(_liveNotificationMuteDocId(memberId, apiFootballFixtureId));
+    await docRef.set({
+      'teamId': teamId,
+      'memberId': memberId,
+      'apiFootballFixtureId': apiFootballFixtureId,
+      'mutedCategories': {category: muted},
+    }, SetOptions(merge: true));
+  }
+
   Future<void> toggleReaction({
     required String teamId,
     required String legId,
@@ -1437,7 +1499,7 @@ class FirestoreService {
     return Member.fromMap(snapshot.docs.first.id, snapshot.docs.first.data());
   }
 
-  Future<void> createGameWeek(GameWeek gameWeek) async {
+    Future<void> createGameWeek(GameWeek gameWeek) async {
     final teamRef = _db.collection('teams').doc(gameWeek.teamId);
     final gameWeekRef = _db.collection('gameWeeks').doc();
     await _db.runTransaction((transaction) async {
@@ -1451,12 +1513,15 @@ class FirestoreService {
     });
 
     final members = await fetchMembers(gameWeek.teamId);
+    final body = gameWeek.isManagerSpecial
+        ? "It's a manager special! ${gameWeek.managerSpecialBetTypes!.map((t) => t.displayName).join(' / ')} only this week 👩‍💼👨‍💼 — get your pick in before the deadline."
+        : 'Gameweek ${gameWeek.weekNumber} is open — get your pick in before the deadline.';
     await sendNotification(
       teamId: gameWeek.teamId,
       recipientMemberIds: [for (final m in members) if (m.id != null) m.id!],
       type: NotificationType.newGameweek,
       title: '🙌 New gameweek 🙌',
-      body: 'Gameweek ${gameWeek.weekNumber} is open — get your pick in before the deadline.',
+      body: body,
     );
   }
 

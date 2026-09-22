@@ -1,36 +1,36 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'app_state.dart';
 import 'firestore_service.dart';
 import 'models.dart';
 import 'api_football_service.dart';
 import 'main.dart'; // for AccaColors
 import 'odds_format.dart';
 import 'settlement_engine.dart';
+import 'fixture_card.dart';
 
 class LiveAccumulatorScreen extends StatefulWidget {
+  final AppState appState;
   final GameWeek gameWeek;
-  const LiveAccumulatorScreen({super.key, required this.gameWeek});
+  const LiveAccumulatorScreen({super.key, required this.appState, required this.gameWeek});
   @override
   State<LiveAccumulatorScreen> createState() => _LiveAccumulatorScreenState();
 }
 
 class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
   List<AccumulatorLeg> legs = [];
-  // fixtureId → live fixture data
   Map<int, ApiFootballFixture> fixtures = {};
-  // fixtureId → events list
   Map<int, List<ApiFootballEvent>> events = {};
-  // memberId → displayName, for showing names instead of raw IDs.
   Map<String, String> memberNames = {};
+  Member? currentMember;
+  Map<int, LiveNotificationMute> mutePrefsByFixture = {};
   bool isLoading = true;
   String? errorMessage;
   Timer? pollTimer;
 
-  // Deduplicated view: groups legs with the same selection into one card.
   List<_LegGroup> get legGroups {
     final groups = <String, _LegGroup>{};
     for (final leg in legs) {
-      // Key: fixture + selection — same fixture, different bet types are separate.
       final key = '${leg.apiFootballFixtureId ?? leg.fixtureDescription}_${leg.selectionDescription}';
       if (groups.containsKey(key)) {
         groups[key]!.legs.add(leg);
@@ -41,7 +41,6 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
     return groups.values.toList();
   }
 
-  // Count of legs currently on track to win.
   int get winningLegsCount {
     int count = 0;
     for (final leg in legs) {
@@ -73,12 +72,34 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
     try {
       final allLegs = await FirestoreService.instance.fetchLegs(widget.gameWeek.teamId);
       final members = await FirestoreService.instance.fetchMembers(widget.gameWeek.teamId);
+      final userId = widget.appState.currentUser?.id;
+      Member? me;
+      if (userId != null) {
+        me = await FirestoreService.instance.fetchMember(teamId: widget.gameWeek.teamId, userId: userId);
+      }
+      final scopedLegs = allLegs
+          .where((l) => l.gameWeekId == widget.gameWeek.id && !l.isSecondaryTournamentLeg)
+          .toList();
+      Map<int, LiveNotificationMute> mutes = {};
+      if (me?.id != null) {
+        final fixtureIds = scopedLegs.map((l) => l.apiFootballFixtureId).whereType<int>().toSet().toList();
+        try {
+          mutes = await FirestoreService.instance.fetchLiveNotificationMutesForMember(
+            teamId: widget.gameWeek.teamId,
+            memberId: me!.id!,
+            apiFootballFixtureIds: fixtureIds,
+          );
+        } catch (_) {
+          // best-effort — a failure here shouldn't block the leg/score data
+          // from loading; the bell icon just won't reflect saved mutes yet.
+        }
+      }
       if (mounted) {
         setState(() {
-          legs = allLegs
-              .where((l) => l.gameWeekId == widget.gameWeek.id && !l.isSecondaryTournamentLeg)
-              .toList();
+          legs = scopedLegs;
           memberNames = {for (final m in members) if (m.id != null) m.id!: m.displayName};
+          currentMember = me;
+          mutePrefsByFixture = mutes;
           isLoading = false;
         });
       }
@@ -93,7 +114,6 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
   }
 
   Future<void> refreshFixtures() async {
-    // Collect unique API Football fixture IDs from legs.
     final fixtureIds = legs
         .where((l) => l.apiFootballFixtureId != null)
         .map((l) => l.apiFootballFixtureId!)
@@ -105,7 +125,6 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
         if (fixture == null || !mounted) continue;
         setState(() => fixtures[fixtureId] = fixture);
 
-        // Fetch events for fixtures that are live or just finished.
         if (fixture.isLive || fixture.isFinished) {
           final fixtureEvents = await ApiFootballService.instance.fetchEvents(fixtureId);
           if (mounted) setState(() => events[fixtureId] = fixtureEvents);
@@ -114,16 +133,11 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
         // best-effort
       }
     }
-
-    // Legs without an API Football fixture ID have no live data — they
-    // will show "—" for the score, which is handled in the card builder.
   }
 
   void startPolling() {
     pollTimer = Timer.periodic(const Duration(seconds: 60), (_) => refreshFixtures());
   }
-
-  // ── Settlement determination (mirrors settleLegs.js logic) ──────────────
 
   bool _isLegCurrentlyWinning(AccumulatorLeg leg) {
     if (leg.outcome == LegOutcome.won) return true;
@@ -138,6 +152,63 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
 
   bool _isLegSettled(AccumulatorLeg leg) =>
       leg.outcome == LegOutcome.won || leg.outcome == LegOutcome.lost;
+
+  Future<void> _showMuteSheet(int fixtureId) async {
+    if (currentMember?.id == null) return;
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Notifications for this match',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                "Affects notifications about anyone's leg on this fixture, not just yours.",
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+              const SizedBox(height: 8),
+              for (final (key, label) in LiveNotificationMute.allCategories)
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(label, style: const TextStyle(color: Colors.black, fontSize: 14)),
+                  value: !(mutePrefsByFixture[fixtureId]?.isMuted(key) ?? false),
+                  activeThumbColor: AccaColors.gold,
+                  onChanged: (receiving) async {
+                    final muted = !receiving;
+                    final existing = mutePrefsByFixture[fixtureId];
+                    final updatedMap = Map<String, bool>.from(existing?.mutedCategories ?? {});
+                    updatedMap[key] = muted;
+                    final updated = LiveNotificationMute(
+                      teamId: widget.gameWeek.teamId,
+                      memberId: currentMember!.id!,
+                      apiFootballFixtureId: fixtureId,
+                      mutedCategories: updatedMap,
+                    );
+                    setSheetState(() => mutePrefsByFixture[fixtureId] = updated);
+                    setState(() => mutePrefsByFixture[fixtureId] = updated);
+                    await FirestoreService.instance.setLiveNotificationMuteCategory(
+                      teamId: widget.gameWeek.teamId,
+                      memberId: currentMember!.id!,
+                      apiFootballFixtureId: fixtureId,
+                      category: key,
+                      muted: muted,
+                    );
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -189,13 +260,42 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
     );
   }
 
+  /// Two-line status box for the header's centre — half + minute while
+  /// live, "FT" once finished, or the fixture's own date/time label if
+  /// it hasn't kicked off yet (a leg's fixture can still be pre-kickoff
+  /// when this screen is opened early).
+  Widget _liveCenter(ApiFootballFixture? fixture) {
+    if (fixture == null) {
+      return const Text('—', style: TextStyle(color: Colors.white54));
+    }
+    final String topLabel;
+    if (fixture.isLive) {
+      topLabel = fixture.halfLabel;
+    } else if (fixture.isFinished) {
+      topLabel = 'FT';
+    } else {
+      topLabel = fixture.statusLabel;
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        fixtureStatusChip(topLabel),
+        if (fixture.isLive && fixture.elapsed != null) ...[
+          const SizedBox(height: 4),
+          Text("${fixture.elapsed}'", style: const TextStyle(color: Colors.white70, fontSize: 11)),
+        ],
+        const SizedBox(height: 6),
+        Text(fixture.scoreDisplay, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+      ],
+    );
+  }
+
   Widget _legGroupCard(_LegGroup group) {
-    final rep = group.legs.first; // representative leg for fixture data
+    final rep = group.legs.first;
     final fixtureId = rep.apiFootballFixtureId;
     final fixture = fixtureId != null ? fixtures[fixtureId] : null;
     final fixtureEvents = fixtureId != null ? (events[fixtureId] ?? []) : <ApiFootballEvent>[];
 
-    // Filter events to only goal and card events, newest first.
     final relevantEvents = fixtureEvents
         .where((e) => e.isGoal || e.isCard)
         .toList()
@@ -203,11 +303,14 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
 
     final isWinning = _isLegCurrentlyWinning(rep);
     final isSettled = _isLegSettled(rep);
+    final hasAnyMute = fixtureId != null && (mutePrefsByFixture[fixtureId]?.mutedCategories.values.any((v) => v) ?? false);
+
+    final homeName = fixture?.homeTeam ?? rep.fixtureDescription.split(' vs ').first;
+    final awayName = fixture?.awayTeam ?? (rep.fixtureDescription.split(' vs ').length > 1 ? rep.fixtureDescription.split(' vs ')[1] : '');
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isSettled
               ? (isWinning ? AccaColors.win : AccaColors.loss)
@@ -215,145 +318,107 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
           width: 1.5,
         ),
       ),
+      clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header: fixture + score + status
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
+          FixtureHeaderCard(
+            fixtureId: fixtureId ?? rep.fixtureDescription.hashCode,
+            homeLogo: fixture?.homeLogo ?? '',
+            awayLogo: fixture?.awayLogo ?? '',
+            homeName: homeName,
+            awayName: awayName,
+            isLive: fixture?.isLive ?? false,
+            centerContent: _liveCenter(fixture),
+          ),
+          FixtureCardFooter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
                     children: [
-                      Text(
-                        rep.fixtureDescription,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                          color: Colors.black,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              rep.selectionDescription,
+                              style: TextStyle(fontSize: 12, color: AccaColors.textSecondary),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              decimalToFractional(rep.decimalOddsAtSelection),
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        rep.selectionDescription,
-                        style: TextStyle(fontSize: 12, color: AccaColors.textSecondary),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        decimalToFractional(rep.decimalOddsAtSelection),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black54,
+                      if (fixtureId != null && currentMember?.id != null)
+                        IconButton(
+                          icon: Icon(
+                            hasAnyMute ? Icons.notifications_off : Icons.notifications_none,
+                            color: Colors.black45,
+                            size: 20,
+                          ),
+                          tooltip: 'Notification settings for this match',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () => _showMuteSheet(fixtureId),
                         ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        isSettled
+                            ? (isWinning ? Icons.check_circle : Icons.cancel)
+                            : (isWinning ? Icons.check_circle_outline : Icons.radio_button_unchecked),
+                        color: isWinning
+                            ? (isSettled ? AccaColors.win : Colors.green)
+                            : (isSettled ? AccaColors.loss : Colors.grey),
+                        size: 28,
                       ),
                     ],
                   ),
                 ),
-                // Score + status
-                if (fixture != null)
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
                     children: [
-                      Text(
-                        fixture.scoreDisplay,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black,
+                      for (final leg in group.legs)
+                        Chip(
+                          label: Text(
+                            memberNames[leg.memberId] ?? 'Unknown',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                          backgroundColor: AccaColors.surface,
+                          labelStyle: const TextStyle(color: Colors.white, fontSize: 11),
                         ),
-                      ),
-                      const SizedBox(height: 2),
-                      _statusChip(fixture),
                     ],
-                  )
-                else
-                  const Text('—', style: TextStyle(color: Colors.grey)),
-                const SizedBox(width: 8),
-                // Tick / cross
-                Icon(
-                  isSettled
-                      ? (isWinning ? Icons.check_circle : Icons.cancel)
-                      : (isWinning ? Icons.check_circle_outline : Icons.radio_button_unchecked),
-                  color: isWinning
-                      ? (isSettled ? AccaColors.win : Colors.green)
-                      : (isSettled ? AccaColors.loss : Colors.grey),
-                  size: 28,
+                  ),
                 ),
+                if (relevantEvents.isNotEmpty) ...[
+                  const Divider(height: 1, color: Colors.black12),
+                  Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Text(
+                      relevantEvents.first.displayText,
+                      style: const TextStyle(fontSize: 11, color: Colors.black87),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 4),
               ],
             ),
           ),
-          // Who picked this leg (when deduplicated across members)
-          if (group.legs.length > 1 || true) // always show member names
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: [
-                  for (final leg in group.legs)
-                    Chip(
-                      label: Text(
-                        memberNames[leg.memberId] ?? 'Unknown',
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                      padding: EdgeInsets.zero,
-                      visualDensity: VisualDensity.compact,
-                      backgroundColor: AccaColors.surface,
-                      labelStyle: const TextStyle(color: Colors.white, fontSize: 11),
-                    ),
-                ],
-              ),
-            ),
-          // Latest match event only.
-          if (relevantEvents.isNotEmpty) ...[
-            const Divider(height: 1, color: Colors.black12),
-            Padding(
-              padding: const EdgeInsets.all(10),
-              child: Text(
-                relevantEvents.first.displayText,
-                style: const TextStyle(fontSize: 11, color: Colors.black87),
-              ),
-            ),
-          ],
-          const SizedBox(height: 4),
         ],
       ),
     );
   }
-
-  Widget _statusChip(ApiFootballFixture fixture) {
-    final Color color;
-    if (fixture.isFinished) {
-      color = AccaColors.loss; // red
-    } else if (fixture.isLive) {
-      color = AccaColors.win; // green
-    } else {
-      color = Colors.white; // white for kick-off soon
-    }
-    final label = fixture.statusLabel;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color, width: 1),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          color: fixture.isNotStarted ? Colors.black : color,
-        ),
-      ),
-    );
-  }
 }
-
-// ── Helper classes ──────────────────────────────────────────────────────────
 
 class _LegGroup {
   final List<AccumulatorLeg> legs;

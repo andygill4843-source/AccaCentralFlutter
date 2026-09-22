@@ -5,6 +5,7 @@ import 'submit_leg_screen.dart';
 import 'main.dart'; // for AccaColors
 import 'odds_format.dart';
 import 'odds_orchestrator.dart';
+
 class CurrentLegScreen extends StatefulWidget {
   final AccumulatorLeg leg;
   final String gameWeekId;
@@ -12,6 +13,11 @@ class CurrentLegScreen extends StatefulWidget {
   final String teamId;
   final DateTime windowStart;
   final DateTime windowEnd;
+  /// Null or empty = any bet type allowed. Non-empty = a manager
+  /// special gameweek — forwarded to SubmitLegScreen so revising a
+  /// selection still only shows the restricted markets.
+  final List<BetType>? allowedBetTypes;
+
   const CurrentLegScreen({
     super.key,
     required this.leg,
@@ -20,13 +26,17 @@ class CurrentLegScreen extends StatefulWidget {
     required this.teamId,
     required this.windowStart,
     required this.windowEnd,
+    this.allowedBetTypes,
   });
+
   @override
   State<CurrentLegScreen> createState() => _CurrentLegScreenState();
 }
+
 class _CurrentLegScreenState extends State<CurrentLegScreen> {
   bool isRevising = false;
   String? errorMessage;
+
   Future<void> reviseSelection() async {
     setState(() {
       isRevising = true;
@@ -40,6 +50,7 @@ class _CurrentLegScreenState extends State<CurrentLegScreen> {
           teamId: widget.teamId,
           windowStart: widget.windowStart,
           windowEnd: widget.windowEnd,
+          allowedBetTypes: widget.allowedBetTypes,
         ),
       ),
     );
@@ -65,6 +76,7 @@ class _CurrentLegScreenState extends State<CurrentLegScreen> {
                 teamId: widget.teamId,
                 windowStart: widget.windowStart,
                 windowEnd: widget.windowEnd,
+                allowedBetTypes: widget.allowedBetTypes,
               ),
             ),
           );
@@ -85,6 +97,7 @@ class _CurrentLegScreenState extends State<CurrentLegScreen> {
     }
     if (mounted) setState(() => isRevising = false);
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
