@@ -333,29 +333,15 @@ class _SubmitLegScreenState extends State<SubmitLegScreen> {
                       Navigator.of(context).pop(true);
                     }
                   },
-                  child: Column(
-                    children: [
-                      FixtureHeaderCard(
-                        fixtureId: fixture.id,
-                        homeLogo: fixture.homeLogo,
-                        awayLogo: fixture.awayLogo,
-                        homeName: fixture.homeTeam,
-                        awayName: fixture.awayTeam,
-                        isLive: false,
-                        centerContent: _kickoffCenter(fixture),
-                      ),
-                      FixtureCardFooter(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: const [
-                              Icon(Icons.chevron_right, color: Colors.black45),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                  child: FixtureHeaderCard(
+                    fixtureId: fixture.id,
+                    homeLogo: fixture.homeLogo,
+                    awayLogo: fixture.awayLogo,
+                    homeName: fixture.homeTeam,
+                    awayName: fixture.awayTeam,
+                    isLive: false,
+                    roundAllCorners: true,
+                    centerContent: _kickoffCenter(fixture),
                   ),
                 ),
               ),
