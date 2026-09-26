@@ -46,6 +46,16 @@ exports.remindPendingLegs = onSchedule("every 30 minutes", async () => {
 
 exports.settleLegs = require("./settleLegs").settleLegs;
 
+exports.deadlineReminder = require('./deadlineReminder').deadlineReminder;
+
+exports.newsPoller = require('./newsPoller').newsPoller;
+
+exports.lineupAnnouncementPoller = require('./lineupAnnouncementPoller').lineupAnnouncementPoller;
+
+exports.runLearningCycle = require('./learningScheduler').runLearningCycle;
+
+exports.getMatchPrediction = require('./getMatchPrediction').getMatchPrediction;
+
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 
 exports.sendPushOnNotification = onDocumentCreated("notifications/{notificationId}", async (event) => {

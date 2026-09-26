@@ -5,8 +5,13 @@ import 'package:http/http.dart' as http;
 ///   - Fixture list fetching (used by gameweek setup)
 ///   - Bet365 odds for all markets (used by odds caching layer)
 ///   - Live scores and match events (used by live screen + cloud function)
-///   - Team form/H2H data (used by the Scout tab's Poisson model)
-///   - Lineups (used by the Line-up tab)
+///   - Team form/H2H/injuries (used by the prediction engine's Cloud
+///     Function — most of these Dart methods are no longer called
+///     directly from the Flutter client since the Scout tab moved to
+///     server-side computation, but are left here as they're harmless
+///     and may still be useful for local testing/reference)
+///   - Lineups (used by the Line-up tab, both official + as the data
+///     source for PredictedLineupService's historical analysis)
 class ApiFootballService {
   static final ApiFootballService instance = ApiFootballService._();
   ApiFootballService._();
@@ -23,10 +28,12 @@ class ApiFootballService {
     'soccer_efl_champ':         40,
     'soccer_england_league1':   41,
     'soccer_england_league2':   42,
+    'apifootball_only_national_league': 135,
     'soccer_italy_serie_a':     135,
     'soccer_spain_la_liga':     140,
     'soccer_france_ligue_one':  61,
     'soccer_germany_bundesliga': 78,
+    'soccer_netherlands_eredivisie': 88,
   };
 
   Map<String, String> get _headers => {'x-apisports-key': _apiKey};
@@ -42,19 +49,11 @@ class ApiFootballService {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  /// A team's most recent completed fixtures, used to derive real W/D/L
-  /// results — the /predictions endpoint's own last_5.form field is a
-  /// percentage, not a literal result sequence, so it can't be used for
-  /// this directly.
-  Future<List<ApiFootballFixture>> fetchLastFixtures(int teamId, {int last = 5}) async {
-    final data = await _get('/fixtures?team=$teamId&last=$last');
-    final fixtures = (data['response'] as List<dynamic>)
-        .map((j) => ApiFootballFixture.fromJson(j as Map<String, dynamic>))
-        .toList();
-    fixtures.sort((a, b) => b.kickoff.compareTo(a.kickoff)); // most recent first
-    return fixtures;
-  }
+  // ══════════════════════════════════════════════════════════════════════════
+  // FIXTURES
+  // ══════════════════════════════════════════════════════════════════════════
 
+  /// Returns all fixtures in the given league within the date window.
   Future<List<ApiFootballFixture>> fetchFixtures({
     required int leagueId,
     required DateTime from,
@@ -72,6 +71,7 @@ class ApiFootballService {
         .toList();
   }
 
+  /// Fetches a single fixture by its API Football ID.
   Future<ApiFootballFixture?> fetchFixture(int fixtureId) async {
     final data = await _get('/fixtures?id=$fixtureId');
     final response = data['response'] as List<dynamic>;
@@ -79,6 +79,24 @@ class ApiFootballService {
     return ApiFootballFixture.fromJson(response[0] as Map<String, dynamic>);
   }
 
+  /// A team's most recent completed fixtures, newest first.
+  Future<List<ApiFootballFixture>> fetchLastFixtures(int teamId, {int last = 5}) async {
+    final data = await _get('/fixtures?team=$teamId&last=$last');
+    final fixtures = (data['response'] as List<dynamic>)
+        .map((j) => ApiFootballFixture.fromJson(j as Map<String, dynamic>))
+        .toList();
+    fixtures.sort((a, b) => b.kickoff.compareTo(a.kickoff));
+    return fixtures;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ODDS — BET365
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Fetches Bet365 odds for a fixture across all target bet types.
+  /// Returns marketName → list of {value, odd} per outcome.
+  /// Each bet type is a separate API call — batched sequentially here since
+  /// the API doesn't support multiple bet IDs in one request.
   Future<Map<String, List<ApiFootballOddsValue>>> fetchBet365Odds(
     int fixtureId,
   ) async {
@@ -109,6 +127,12 @@ class ApiFootballService {
     return result;
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // LIVE SCORES
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Returns all live fixtures across the specified league IDs.
+  /// Pass only the leagues that have pending legs — one call, minimal cost.
   Future<List<ApiFootballFixture>> fetchLiveFixtures(
     List<int> apiLeagueIds,
   ) async {
@@ -120,6 +144,11 @@ class ApiFootballService {
         .toList();
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // EVENTS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Returns all match events (goals, cards, subs) for a fixture.
   Future<List<ApiFootballEvent>> fetchEvents(int fixtureId) async {
     final data = await _get('/fixtures/events?fixture=$fixtureId');
     return (data['response'] as List<dynamic>)
@@ -127,17 +156,72 @@ class ApiFootballService {
         .toList();
   }
 
-  /// Team form + head-to-head data for the Scout tab. The raw win/draw/
-  /// away percentages and other pre-computed fields in this response are
-  /// deliberately NOT used for the displayed predictions — those are
-  /// computed independently via PoissonPrediction from the last-5 goals
-  /// data returned here, per the explicit weighted-Poisson requirement.
+  // ══════════════════════════════════════════════════════════════════════════
+  // PREDICTIONS / FORM / H2H / TEAM STATS / INJURIES
+  // (originally used by the client-side Scout tab; now primarily
+  // superseded by the Cloud Function's own JS port of this same data
+  // fetching — kept here as they're harmless and may still be useful)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Team form + head-to-head data. The raw win/draw/away percentages
+  /// and other pre-computed fields in this response are deliberately
+  /// NOT used for displayed predictions — those are computed
+  /// independently via the weighted-Poisson engine.
   Future<ApiFootballPredictionData?> fetchPredictions(int fixtureId) async {
     final data = await _get('/predictions?fixture=$fixtureId');
     final response = data['response'] as List<dynamic>;
     if (response.isEmpty) return null;
     return ApiFootballPredictionData.fromJson(response[0] as Map<String, dynamic>);
   }
+
+  /// Raw /predictions response — used by ApiFootballMapper.predictionFromJson,
+  /// which expects the full response envelope.
+  Future<Map<String, dynamic>> fetchPredictionsRaw(int fixtureId) async {
+    return _get('/predictions?fixture=$fixtureId');
+  }
+
+  /// Season + home/away split statistics for a team — feeds VenueRecord
+  /// and season goals-per-game figures for the prediction engine.
+  Future<ApiFootballTeamStatistics?> fetchTeamStatistics({
+    required int teamId,
+    required int leagueId,
+    int? season,
+  }) async {
+    final data = await _get('/teams/statistics?league=$leagueId&season=${season ?? _currentSeason}&team=$teamId');
+    final response = data['response'];
+    if (response is! Map || response.isEmpty) return null;
+    return ApiFootballTeamStatistics.fromJson(response as Map<String, dynamic>);
+  }
+
+  /// Raw head-to-head fixture list between two teams — kept as raw JSON
+  /// so each entry can be fed directly into
+  /// ApiFootballMapper.h2hFromFixtureJson, which expects the API's own
+  /// fixture shape.
+  Future<List<Map<String, dynamic>>> fetchHeadToHeadRaw(
+    int homeTeamId,
+    int awayTeamId, {
+    int last = 5,
+  }) async {
+    final data = await _get('/fixtures/headtohead?h2h=$homeTeamId-$awayTeamId&last=$last');
+    return (data['response'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+  }
+
+  /// Injuries and suspensions for a fixture. NOT every league has
+  /// coverage for this — check the coverage.injuries flag in
+  /// /leagues if this comes back unexpectedly empty for a league you'd
+  /// expect data for.
+  Future<List<ApiFootballInjury>> fetchInjuries(int fixtureId) async {
+    final data = await _get('/injuries?fixture=$fixtureId');
+    final response = data['response'] as List<dynamic>? ?? [];
+    return response
+        .map((e) => ApiFootballInjury.fromJson(e as Map<String, dynamic>))
+        .where((i) => i.playerId != 0)
+        .toList();
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // LINEUPS
+  // ══════════════════════════════════════════════════════════════════════════
 
   /// Lineups for a fixture — usually not published by leagues until
   /// close to kickoff. An empty result here is normal for a fixture
@@ -166,6 +250,10 @@ class ApiFootballService {
       '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// DATA MODELS
+// ════════════════════════════════════════════════════════════════════════════
+
 class ApiFootballFixture {
   final int id;
   final String homeTeam;
@@ -183,6 +271,7 @@ class ApiFootballFixture {
   final int leagueId;
   final String leagueName;
   final String? venue;
+  final int season;
 
   static const List<String> _monthAbbrev = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -205,11 +294,17 @@ class ApiFootballFixture {
     required this.leagueId,
     required this.leagueName,
     this.venue,
+    required this.season,
   });
 
   bool get isLive => const {'1H', 'HT', '2H', 'ET', 'BT', 'P'}.contains(statusShort);
   bool get isFinished => const {'FT', 'AET', 'PEN', 'AWD', 'WO'}.contains(statusShort);
   bool get isNotStarted => statusShort == 'NS';
+
+  /// Statuses meaning the fixture won't go ahead on its scheduled
+  /// kickoff as planned — no reliable odds or predictions data exists
+  /// for these. Excluded from the pick-selection fixture list entirely
+  /// rather than shown with a broken/empty screen behind them.
   bool get isUnavailableForSelection =>
       const {'PST', 'CANC', 'ABD', 'SUSP', 'INT', 'TBD'}.contains(statusShort);
 
@@ -217,6 +312,8 @@ class ApiFootballFixture {
     if (statusShort == 'HT') return 'Half time';
     if (isLive && elapsed != null) return "$elapsed'";
     if (isFinished) return 'Full time';
+    // Not started yet — show the date and time, e.g. "20 Sep 26 20:00",
+    // rather than just the time alone, since kickoff could be days away.
     final local = kickoff.toLocal();
     final day = local.day.toString().padLeft(2, '0');
     final month = _monthAbbrev[local.month - 1];
@@ -226,6 +323,8 @@ class ApiFootballFixture {
     return '$day $month $year $hour:$minute';
   }
 
+  /// Short label for the top line of a live status chip — "1ST", "2ND",
+  /// "HT", "ET", "PEN", or "FT".
   String get halfLabel {
     switch (statusShort) {
       case '1H': return '1ST';
@@ -259,6 +358,7 @@ class ApiFootballFixture {
       leagueId: json['league']['id'] as int,
       leagueName: json['league']['name'] as String,
       venue: json['fixture']['venue']?['name'] as String?,
+      season: json['league']['season'] as int? ?? DateTime.now().year,
     );
   }
 
@@ -279,6 +379,7 @@ class ApiFootballFixture {
     'leagueId': leagueId,
     'leagueName': leagueName,
     'venue': venue,
+    'season': season,
   };
 }
 
@@ -337,7 +438,7 @@ class ApiFootballEvent {
       playerName: json['player']?['name'] as String?,
       assistName: json['assist']?['name'] as String?,
       type: json['type'] as String,
-      detail: json['detail'] as String,
+      detail: (json['detail'] as String) == 'Normal Goal' ? 'Goal' : json['detail'] as String,
       comments: json['comments'] as String?,
     );
   }
@@ -350,19 +451,18 @@ class ApiFootballOddsValue {
 }
 
 /// One team's recent form, as returned under teams.home/away in the
-/// /predictions response. goalsForAvg/goalsAgainstAvg feed directly into
-/// PoissonPrediction.compute. The exact nested field path for these two
-/// numbers is best-effort based on available documentation — not
-/// independently verified against a live payload — so double.tryParse
-/// is used defensively throughout rather than assuming the path is
-/// exactly right; a missing/renamed field falls back to 0.0 rather than
-/// crashing. Worth confirming against a real response the first time
-/// this runs.
+/// /predictions response. goalsForAvg/goalsAgainstAvg feed the
+/// prediction engine. The exact nested field path for these two numbers
+/// is best-effort based on available documentation, not independently
+/// verified against a live payload — double.tryParse is used
+/// defensively throughout rather than assuming the path is exactly
+/// right; a missing/renamed field falls back to 0.0 rather than
+/// crashing.
 class ApiFootballTeamForm {
   final int teamId;
   final String teamName;
   final String logo;
-  final String formString; // e.g. "WWDLW", most recent last per usual convention
+  final String formString;
   final double goalsForAvg;
   final double goalsAgainstAvg;
 
@@ -375,7 +475,6 @@ class ApiFootballTeamForm {
     required this.goalsAgainstAvg,
   });
 
-  /// Last 5 results, most recent first, as single-letter W/D/L codes.
   List<String> get lastResultsMostRecentFirst =>
       formString.split('').reversed.take(5).toList();
 
@@ -399,8 +498,7 @@ class ApiFootballTeamForm {
 }
 
 /// One past head-to-head fixture, from the /predictions response's h2h
-/// array — reused fixture-shaped objects, same format as the main
-/// /fixtures endpoint.
+/// array — same shape as the main /fixtures endpoint.
 class ApiFootballH2HResult {
   final DateTime date;
   final String homeTeam;
@@ -455,11 +553,124 @@ class ApiFootballPredictionData {
   }
 }
 
+/// Season + home/away split stats for a team, from /teams/statistics —
+/// a standard, well-documented API-Football endpoint. Field paths below
+/// follow its confirmed standard shape.
+class ApiFootballTeamStatistics {
+  final double seasonGoalsForAvg;
+  final double seasonGoalsAgainstAvg;
+
+  final int homePlayed;
+  final int homeWins;
+  final int homeDraws;
+  final int homeLosses;
+  final double homeGoalsForAvg;
+  final double homeGoalsAgainstAvg;
+
+  final int awayPlayed;
+  final int awayWins;
+  final int awayDraws;
+  final int awayLosses;
+  final double awayGoalsForAvg;
+  final double awayGoalsAgainstAvg;
+
+  const ApiFootballTeamStatistics({
+    required this.seasonGoalsForAvg,
+    required this.seasonGoalsAgainstAvg,
+    required this.homePlayed,
+    required this.homeWins,
+    required this.homeDraws,
+    required this.homeLosses,
+    required this.homeGoalsForAvg,
+    required this.homeGoalsAgainstAvg,
+    required this.awayPlayed,
+    required this.awayWins,
+    required this.awayDraws,
+    required this.awayLosses,
+    required this.awayGoalsForAvg,
+    required this.awayGoalsAgainstAvg,
+  });
+
+  static double _avg(dynamic raw) => double.tryParse(raw?.toString() ?? '') ?? 0.0;
+  static int _asInt(dynamic raw) => raw is int ? raw : (int.tryParse(raw?.toString() ?? '') ?? 0);
+
+  factory ApiFootballTeamStatistics.fromJson(Map<String, dynamic> json) {
+    final fixtures = json['fixtures'] as Map<String, dynamic>? ?? {};
+    final played = fixtures['played'] as Map<String, dynamic>? ?? {};
+    final wins = fixtures['wins'] as Map<String, dynamic>? ?? {};
+    final draws = fixtures['draws'] as Map<String, dynamic>? ?? {};
+    final loses = fixtures['loses'] as Map<String, dynamic>? ?? {};
+
+    final goals = json['goals'] as Map<String, dynamic>? ?? {};
+    final goalsFor = goals['for'] as Map<String, dynamic>? ?? {};
+    final goalsAgainst = goals['against'] as Map<String, dynamic>? ?? {};
+    final goalsForAvg = goalsFor['average'] as Map<String, dynamic>? ?? {};
+    final goalsAgainstAvg = goalsAgainst['average'] as Map<String, dynamic>? ?? {};
+
+    return ApiFootballTeamStatistics(
+      seasonGoalsForAvg: _avg(goalsForAvg['total']),
+      seasonGoalsAgainstAvg: _avg(goalsAgainstAvg['total']),
+      homePlayed: _asInt(played['home']),
+      homeWins: _asInt(wins['home']),
+      homeDraws: _asInt(draws['home']),
+      homeLosses: _asInt(loses['home']),
+      homeGoalsForAvg: _avg(goalsForAvg['home']),
+      homeGoalsAgainstAvg: _avg(goalsAgainstAvg['home']),
+      awayPlayed: _asInt(played['away']),
+      awayWins: _asInt(wins['away']),
+      awayDraws: _asInt(draws['away']),
+      awayLosses: _asInt(loses['away']),
+      awayGoalsForAvg: _avg(goalsForAvg['away']),
+      awayGoalsAgainstAvg: _avg(goalsAgainstAvg['away']),
+    );
+  }
+}
+
+/// One injury/suspension entry from /injuries. Confirmed field-level
+/// shape (type/reason as two distinct fields) per API-Football's own
+/// documentation, but the EXACT nested JSON path for player/team wasn't
+/// independently verified against a live payload — parsed defensively
+/// (checks a nested 'player'/'team' object first, falls back to a flat
+/// shape) so a shape mismatch returns fewer/no entries rather than
+/// crashing.
+class ApiFootballInjury {
+  final int playerId;
+  final String playerName;
+  final String? playerPhoto;
+  final int teamId;
+  final String type; // "Injury" or "Suspension" per API-Football's docs
+  final String? reason; // e.g. "Knee Injury", "Suspended 3 matches"
+
+  const ApiFootballInjury({
+    required this.playerId,
+    required this.playerName,
+    this.playerPhoto,
+    required this.teamId,
+    required this.type,
+    this.reason,
+  });
+
+  factory ApiFootballInjury.fromJson(Map<String, dynamic> json) {
+    final playerJson = (json['player'] as Map<String, dynamic>?) ?? json;
+    final teamJson = (json['team'] as Map<String, dynamic>?) ?? {};
+    return ApiFootballInjury(
+      playerId: playerJson['id'] as int? ?? 0,
+      playerName: playerJson['name'] as String? ?? 'Unknown',
+      playerPhoto: playerJson['photo'] as String?,
+      teamId: teamJson['id'] as int? ?? 0,
+      type: json['type'] as String? ?? playerJson['type'] as String? ?? 'Unavailable',
+      reason: json['reason'] as String? ?? playerJson['reason'] as String?,
+    );
+  }
+}
+
 /// A single player's lineup entry. gridRow/gridCol come from
 /// API-Football's own "X:Y" grid field per player — row 1 is the
 /// goalkeeper, increasing rows moving forward. Used directly to place
 /// each player on the pitch diagram without hardcoding formation-shape
-/// coordinates for every possible formation string.
+/// coordinates for every possible formation string. Also used to
+/// represent a PREDICTED player (see PredictedLineupService), with
+/// synthetic grid coordinates computed the same way.
 class ApiFootballLineupPlayer {
   final int id;
   final String name;
@@ -505,6 +716,24 @@ class ApiFootballLineupPlayer {
       gridCol: col,
     );
   }
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'name': name,
+    'number': number,
+    'position': position,
+    'gridRow': gridRow,
+    'gridCol': gridCol,
+  };
+
+  factory ApiFootballLineupPlayer.fromMap(Map<String, dynamic> map) => ApiFootballLineupPlayer(
+    id: map['id'] as int,
+    name: map['name'] as String,
+    number: map['number'] as String?,
+    position: map['position'] as String?,
+    gridRow: map['gridRow'] as int,
+    gridCol: map['gridCol'] as int,
+  );
 }
 
 class ApiFootballTeamLineup {
@@ -540,6 +769,24 @@ class ApiFootballTeamLineup {
       coachName: json['coach']?['name'] as String?,
     );
   }
+
+  Map<String, dynamic> toMap() => {
+    'teamId': teamId,
+    'teamName': teamName,
+    'formation': formation,
+    'startXI': startXI.map((p) => p.toMap()).toList(),
+    'substitutes': substitutes.map((p) => p.toMap()).toList(),
+    'coachName': coachName,
+  };
+
+  factory ApiFootballTeamLineup.fromMap(Map<String, dynamic> map) => ApiFootballTeamLineup(
+    teamId: map['teamId'] as int,
+    teamName: map['teamName'] as String,
+    formation: map['formation'] as String,
+    startXI: (map['startXI'] as List).map((p) => ApiFootballLineupPlayer.fromMap(Map<String, dynamic>.from(p))).toList(),
+    substitutes: (map['substitutes'] as List).map((p) => ApiFootballLineupPlayer.fromMap(Map<String, dynamic>.from(p))).toList(),
+    coachName: map['coachName'] as String?,
+  );
 }
 
 class ApiFootballLineups {
@@ -547,4 +794,52 @@ class ApiFootballLineups {
   final ApiFootballTeamLineup? away;
   const ApiFootballLineups({this.home, this.away});
   bool get isAvailable => home != null && away != null;
+}
+
+class LineupCache {
+  final int fixtureId;
+  final bool isOfficial;
+  final ApiFootballTeamLineup? home;
+  final ApiFootballTeamLineup? away;
+  final double homeConfidence;
+  final double awayConfidence;
+  final DateTime computedAt;
+  final DateTime? lastOfficialCheckAt;
+  final int predictionVersion; // 0 = pre-versioning, always treated as stale
+
+  const LineupCache({
+    required this.fixtureId,
+    required this.isOfficial,
+    this.home,
+    this.away,
+    this.homeConfidence = 0,
+    this.awayConfidence = 0,
+    required this.computedAt,
+    this.lastOfficialCheckAt,
+    this.predictionVersion = 0,
+  });
+
+  factory LineupCache.fromMap(Map<String, dynamic> map) => LineupCache(
+    fixtureId: map['fixtureId'] as int,
+    isOfficial: map['isOfficial'] as bool? ?? false,
+    home: map['home'] != null ? ApiFootballTeamLineup.fromMap(Map<String, dynamic>.from(map['home'])) : null,
+    away: map['away'] != null ? ApiFootballTeamLineup.fromMap(Map<String, dynamic>.from(map['away'])) : null,
+    homeConfidence: (map['homeConfidence'] as num?)?.toDouble() ?? 0,
+    awayConfidence: (map['awayConfidence'] as num?)?.toDouble() ?? 0,
+    computedAt: (map['computedAt'] as dynamic).toDate(),
+    lastOfficialCheckAt: (map['lastOfficialCheckAt'] as dynamic)?.toDate(),
+    predictionVersion: map['predictionVersion'] as int? ?? 0,
+  );
+
+  Map<String, dynamic> toMap() => {
+    'fixtureId': fixtureId,
+    'isOfficial': isOfficial,
+    'home': home?.toMap(),
+    'away': away?.toMap(),
+    'homeConfidence': homeConfidence,
+    'awayConfidence': awayConfidence,
+    'computedAt': computedAt,
+    'lastOfficialCheckAt': lastOfficialCheckAt,
+    'predictionVersion': predictionVersion,
+  };
 }

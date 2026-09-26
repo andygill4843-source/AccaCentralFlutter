@@ -42,6 +42,31 @@ class Team {
     };
   }
 }
+
+class NewsArticle {
+  final String title;
+  final String snippet;
+  final String source;
+  final String url;
+  final String? imageUrl;
+
+  const NewsArticle({
+    required this.title,
+    required this.snippet,
+    required this.source,
+    required this.url,
+    this.imageUrl,
+  });
+
+  factory NewsArticle.fromMap(Map<String, dynamic> map) => NewsArticle(
+    title: map['title'] as String? ?? '',
+    snippet: map['snippet'] as String? ?? '',
+    source: map['source'] as String? ?? '',
+    url: map['url'] as String? ?? '',
+    imageUrl: (map['imageUrl'] as String?)?.isNotEmpty == true ? map['imageUrl'] as String : null,
+  );
+}
+
 class AppUser {
   final String? id;
   final String username;
@@ -280,6 +305,7 @@ class AccumulatorLeg {
   final bool isSecondaryTournamentLeg;
   final int? apiFootballFixtureId;
   final int? apiFootballLeagueId;
+  final DateTime? settledAt;
   AccumulatorLeg({
     this.id,
     required this.gameWeekId,
@@ -303,6 +329,7 @@ class AccumulatorLeg {
     this.isSecondaryTournamentLeg = false,
     this.apiFootballFixtureId,
     this.apiFootballLeagueId,
+    this.settledAt,
   });
   int get basePoints => outcome == LegOutcome.won ? 3 : 0;
   double get weightedPoints {
@@ -323,6 +350,7 @@ class AccumulatorLeg {
       marketName: map['marketName'] as String?,
       pickValue: map['pickValue'] as String?,
       decimalOddsAtSelection: (map['decimalOddsAtSelection'] as num).toDouble(),
+      settledAt: (map['settledAt'] as dynamic)?.toDate(),
       bookmaker: map['bookmaker'],
       bookmakerPrices: (map['bookmakerPrices'] as Map?)?.map(
         (k, v) => MapEntry(k as String, (v as num).toDouble()),
@@ -360,6 +388,7 @@ class AccumulatorLeg {
       'isSecondaryTournamentLeg': isSecondaryTournamentLeg,
       'apiFootballFixtureId': apiFootballFixtureId,
       'apiFootballLeagueId': apiFootballLeagueId,
+      'settledAt': settledAt,
     };
   }
 }
@@ -879,6 +908,8 @@ enum NotificationType {
   challengePlaced,
   challengeAccepted,
   challengeDeclined,
+  lineupConfirmed,
+  scoutSelectionAssessment,
   challengeResolved,
   gameweekLocked,
   leaguePosition,

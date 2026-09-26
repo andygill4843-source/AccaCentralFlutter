@@ -62,6 +62,17 @@ service cloud.firestore {
         );
       allow delete: if false;
     }
+
+    match /prediction_records/{fixtureId} {
+      allow read, write: if false;
+    }
+    match /prediction_model_versions/{version} {
+      allow read, write: if false;
+    }
+    match /learningState/{doc} {
+      allow read, write: if false;
+    }
+
     match /notifications/{notificationId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
       allow create: if isMemberOfTeam(request.resource.data.teamId);
@@ -74,6 +85,16 @@ service cloud.firestore {
       allow create: if isTeamManager(request.resource.data.teamId);
       allow update, delete: if false;
     }
+
+    match /footballNews/{doc} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /lineupNotificationsSent/{fixtureId} {
+      allow read, write: if false;
+    }
+
     match /liveNotificationMutes/{docId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
       allow create: if isSignedIn()
@@ -96,6 +117,14 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['consumedByFineId']);
       allow delete: if false;
     }
+
+    match /lineupCache/{fixtureId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if false;
+    }
+
+
     match /reactions/{reactionId} {
       allow read: if isMemberOfTeam(resource.data.teamId);
       allow create: if isSignedIn()
@@ -140,6 +169,12 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
       allow update, delete: if false;
     }
+
+    match /matchPredictions/{fixtureId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     match /teams/{teamId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn()

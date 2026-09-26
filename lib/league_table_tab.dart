@@ -73,19 +73,21 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
       final currentSeasonGameWeekIds = currentSeasonGameWeeks.map((g) => g.id).toSet();
       final currentSeasonLegs = legs.where((l) => currentSeasonGameWeekIds.contains(l.gameWeekId)).toList();
       final challenges = await FirestoreService.instance.fetchChallenges(teamId: widget.teamId, season: team?.season ?? '');
-      // Current, live standing correctly includes every resolved challenge
-      // regardless of when it happened — this is meant to be "as of now".
       final currentEntries = ScoringEngine.buildLeagueTable(members: members, legs: currentSeasonLegs, challenges: challenges);
-      final settledWeeks = currentSeasonGameWeeks.where((g) => g.isSettled).toList()
+
+      // Gated by "has this gameweek actually started" rather than
+      // "has the manager formally closed it" — an "as-is" view means
+      // the form arrow and graph reflect legs settling live throughout
+      // an in-progress week, not just a once-a-week snapshot taken on
+      // closure.
+      final relevantWeeks = currentSeasonGameWeeks.where((g) => !g.startDate.isAfter(DateTime.now())).toList()
         ..sort((a, b) => a.weekNumber.compareTo(b.weekNumber));
+
       final Map<String, int?> delta = {};
-      if (settledWeeks.length >= 2) {
-        final latestWeek = settledWeeks.last;
-        final previousGameWeekIds = settledWeeks.where((g) => g.weekNumber < latestWeek.weekNumber).map((g) => g.id).toSet();
+      if (relevantWeeks.length >= 2) {
+        final latestWeek = relevantWeeks.last;
+        final previousGameWeekIds = relevantWeeks.where((g) => g.weekNumber < latestWeek.weekNumber).map((g) => g.id).toSet();
         final previousLegs = currentSeasonLegs.where((l) => previousGameWeekIds.contains(l.gameWeekId)).toList();
-        // Challenges scoped to the same gameweek window as the legs — a
-        // challenge that only resolved in a LATER week must not inject
-        // its bonus points into this earlier snapshot.
         final previousChallenges = challenges.where((c) => previousGameWeekIds.contains(c.gameWeekId)).toList();
         final previousEntries = ScoringEngine.buildLeagueTable(members: members, legs: previousLegs, challenges: previousChallenges);
         final Map<String, int> previousPosition = {
@@ -103,11 +105,9 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
         }
       }
       final Map<int, List<LeagueTableEntry>> history = {};
-      for (final week in settledWeeks) {
-        final upToWeekIds = settledWeeks.where((g) => g.weekNumber <= week.weekNumber).map((g) => g.id).toSet();
+      for (final week in relevantWeeks) {
+        final upToWeekIds = relevantWeeks.where((g) => g.weekNumber <= week.weekNumber).map((g) => g.id).toSet();
         final legsUpToWeek = currentSeasonLegs.where((l) => upToWeekIds.contains(l.gameWeekId)).toList();
-        // Same fix as above — only include challenges tied to a
-        // gameweek that's actually part of this snapshot's window.
         final challengesUpToWeek = challenges.where((c) => upToWeekIds.contains(c.gameWeekId)).toList();
         history[week.weekNumber] = ScoringEngine.buildLeagueTable(members: members, legs: legsUpToWeek, challenges: challengesUpToWeek);
       }
@@ -117,7 +117,6 @@ class _LeagueTableTabState extends State<LeagueTableTab> {
         positionHistory = history;
         unreadNotifications = unreadCount;
         isLoading = false;
-        // Keep the existing filter selection if it's still valid; otherwise fall back to "show everyone".
         if (_selectedMemberIds != null) {
           final validIds = currentEntries.map((e) => e.memberId).toSet();
           _selectedMemberIds = _selectedMemberIds!.intersection(validIds);

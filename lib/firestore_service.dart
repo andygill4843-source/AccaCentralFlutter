@@ -6,6 +6,7 @@ import 'scoring_engine.dart';
 import 'tournament_bracket_engine.dart';
 import 'odds_format.dart';
 import 'odds_api_service.dart';
+import 'api_football_service.dart';
 
 class FirestoreService {
   static final FirestoreService instance = FirestoreService._();
@@ -25,6 +26,37 @@ class FirestoreService {
     return '${teamId}_${season.replaceAll('/', '-')}';
   }
 
+  Future<List<NewsArticle>> fetchLatestFootballNews() async {
+    final doc = await _db.collection('footballNews').doc('latest').get();
+    if (!doc.exists) return [];
+    final articles = doc.data()?['articles'] as List<dynamic>? ?? [];
+    return articles.map((a) => NewsArticle.fromMap(Map<String, dynamic>.from(a))).toList();
+  }
+
+  /// Goal/card/sub/HT/FT event feed entries for a set of fixtures —
+  /// used by the home screen's Acca News Feed (state 4). Settlement
+  /// entries are NOT read here — those come directly from the
+  /// already-loaded legs' own outcome/settledAt fields.
+  Future<List<Map<String, dynamic>>> fetchLiveMatchEventsForFixtures({
+    required String teamId,
+    required List<int> apiFootballFixtureIds,
+  }) async {
+    if (apiFootballFixtureIds.isEmpty) return [];
+    final results = <Map<String, dynamic>>[];
+    for (var i = 0; i < apiFootballFixtureIds.length; i += 30) {
+      final batch = apiFootballFixtureIds.skip(i).take(30).toList();
+      final snapshot = await _db.collection('liveMatchEvents')
+          .where('teamId', isEqualTo: teamId)
+          .where('apiFootballFixtureId', whereIn: batch)
+          .orderBy('processedAt', descending: true)
+          .limit(30)
+          .get();
+      results.addAll(snapshot.docs.map((d) => d.data()));
+    }
+    results.sort((a, b) => (b['processedAt'] as Timestamp).compareTo(a['processedAt'] as Timestamp));
+    return results;
+  }
+
   Future<SeasonSettings?> fetchSeasonSettings({required String teamId, required String season}) async {
     final doc = await _db.collection('seasonSettings').doc(_seasonSettingsDocId(teamId, season)).get();
     if (!doc.exists) return null;
@@ -35,8 +67,75 @@ class FirestoreService {
     await _db.collection('members').doc(memberDocId).update({'displayName': newDisplayName});
   }
 
+  /// Fires a random flavour-text notification to the whole team when a
+  /// leg is submitted with either high (≥80%) or low (<50%) scout
+  /// confidence — nothing for the 50–80% middle band. "Above 1/1" is
+  /// treated as decimal odds > 2.0, "below/at 1/1" as ≤ 2.0.
+  Future<void> sendScoutSelectionNotification({
+    required AccumulatorLeg leg,
+    required double probability,
+    required String submitterDisplayName,
+  }) async {
+    final members = await fetchMembers(leg.teamId);
+    final recipientIds = [for (final m in members) if (m.id != null) m.id!];
+    if (recipientIds.isEmpty) return;
+
+    final oddsAboveEvens = leg.decimalOddsAtSelection > 2.0;
+    final random = Random();
+
+    String? body;
+    if (probability >= 0.80) {
+      body = oddsAboveEvens
+          ? (random.nextBool()
+              ? "🤩 $submitterDisplayName's selection is in and it's a hit with the Acca Central scouting team"
+              : "😎 Hellllooooooo. The scouting team like this one. $submitterDisplayName's selection is in")
+          : (random.nextBool()
+              ? "🫶 $submitterDisplayName's selection is in. Some say boring, others say smart. It's a hit with the Acca Central scouts."
+              : "Boring boring $submitterDisplayName. Safe as you like?! We'll see, but the scouts seem to approve. 🤗.");
+    } else if (probability < 0.50) {
+      body = oddsAboveEvens
+          ? (random.nextBool()
+              ? "🤔 $submitterDisplayName's placed their selection. It's a weighty dream, but the scouts do not fancy it 🫣."
+              : "It's a Hail Mary for sure. $submitterDisplayName's selection is in and it's up there, but the scouts aren't so sure 👀.")
+          : (random.nextBool()
+              ? "🤔 $submitterDisplayName's placed their selection but there are questions already. Low odds and no confidence from the gaffa's team 🫣."
+              : "Wow. On paper that seems poor for $submitterDisplayName's selection. Low odds and no confidence from the backroom staff 🙅🏻‍♂️.");
+    } else {
+      return; // medium confidence — no notification
+    }
+
+    await sendNotification(
+      teamId: leg.teamId,
+      recipientMemberIds: recipientIds,
+      type: NotificationType.scoutSelectionAssessment,
+      title: '🔍 Scout assessment',
+      body: body,
+    );
+  }
+
   Future<void> updateGameWeekDeadline({required String gameWeekId, required DateTime newDeadline}) async {
     await _db.collection('gameWeeks').doc(gameWeekId).update({'deadline': newDeadline});
+  }
+
+  Future<LineupCache?> fetchLineupCache(int fixtureId) async {
+    final doc = await _db.collection('lineupCache').doc(fixtureId.toString()).get();
+    if (!doc.exists) return null;
+    return LineupCache.fromMap(doc.data()!);
+  }
+
+  Future<void> saveLineupCache(LineupCache cache) async {
+    await _db.collection('lineupCache').doc(cache.fixtureId.toString()).set(cache.toMap());
+  }
+
+  /// Lightweight, merge-only write recording that an official-lineup
+  /// check just happened without finding one yet — lets LineupTab
+  /// throttle re-checks rather than hitting the API on every tab open
+  /// during the pre-kickoff window.
+  Future<void> touchLineupCacheOfficialCheck(int fixtureId) async {
+    await _db.collection('lineupCache').doc(fixtureId.toString()).set(
+      {'lastOfficialCheckAt': DateTime.now()},
+      SetOptions(merge: true),
+    );
   }
 
   Future<void> createSeasonSettings(SeasonSettings settings) async {
@@ -838,12 +937,12 @@ class FirestoreService {
           recs.add('You hit a ${entry.longestWinStreak}-game winning streak — keep that momentum going next season.');
         }
         if (stats.valueHunterCount > 0) {
-          recs.add('You picked ${stats.valueHunterCount} high-value leg${stats.valueHunterCount == 1 ? '' : 's'} (3/1+) this season — value betting suits you.');
+          recs.add('You picked ${stats.valueHunterCount} high-value leg${stats.valueHunterCount == 1 ? '' : 's'} (3/1+) this season — value selections suits you.');
         }
         if (i <= 2) {
           recs.add("You finished in the top 3 — you're a genuine title contender. Consistency is your friend next season.");
         } else if (i >= table.length - 2 && table.length > 3) {
-          recs.add('Finishing near the bottom can hurt — try to pick more consistently and avoid risky bets in the early weeks.');
+          recs.add('Finishing near the bottom can hurt — try to pick more consistently and avoid risky selections in the early weeks.');
         }
       }
       if (recs.isEmpty) {

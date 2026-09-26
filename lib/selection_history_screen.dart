@@ -133,6 +133,7 @@ class _SelectionHistoryScreenState extends State<SelectionHistoryScreen> {
       if (leg.isSecondaryTournamentLeg) continue; // tournament secondary picks don't belong in the main history
       final gw = gwById[leg.gameWeekId];
       if (gw == null || gw.season != selectedSeason) continue;
+      if (!gw.isLocked) continue; // bet details stay hidden until the gameweek locks, matching the home screen's pre-lock treatment
       rows.add(_HistoryRow(
         leg: leg,
         gameWeek: gw,

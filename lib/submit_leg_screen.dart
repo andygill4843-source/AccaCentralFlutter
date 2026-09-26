@@ -37,10 +37,12 @@ class _SubmitLegScreenState extends State<SubmitLegScreen> {
     'soccer_efl_champ':         'Championship',
     'soccer_england_league1':   'League One',
     'soccer_england_league2':   'League Two',
+    'apifootball_only_national_league': 'National League',
     'soccer_italy_serie_a':     'Serie A',
     'soccer_spain_la_liga':     'La Liga',
     'soccer_france_ligue_one':  'Ligue 1',
     'soccer_germany_bundesliga': 'Bundesliga',
+    'soccer_netherlands_eredivisie': 'Eredivisie',
   };
 
   static const List<String> _weekdayNames = [

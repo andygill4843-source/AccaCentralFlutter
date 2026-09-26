@@ -8,6 +8,7 @@ import 'odds_orchestrator.dart';
 import 'fixture_card.dart';
 import 'scout_tab.dart';
 import 'lineup_tab.dart';
+import 'leg_scout_confidence.dart';
 
 class PickOutcomeScreen extends StatefulWidget {
   final ApiFootballFixture fixture;
@@ -215,9 +216,38 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
         apiFootballFixtureId: widget.fixture.id,
         apiFootballLeagueId: widget.fixture.leagueId,
       );
+
       await FirestoreService.instance.submitLeg(leg);
+
+      // Best-effort scout-assessment notification — never blocks a
+      // successful submission if this fails or no prediction data
+      // exists for the market picked.
+      try {
+        final probability = await fetchScoutProbabilityForLeg(leg);
+        if (probability != null) {
+          final members = await FirestoreService.instance.fetchMembers(widget.teamId);
+          Member? submitter;
+          for (final m in members) {
+            if (m.id == widget.memberId) {
+              submitter = m;
+              break;
+            }
+          }
+          if (submitter != null) {
+            await FirestoreService.instance.sendScoutSelectionNotification(
+              leg: leg,
+              probability: probability,
+              submitterDisplayName: submitter.displayName,
+            );
+          }
+        }
+      } catch (_) {
+        // best-effort
+      }
+
       if (!mounted) return;
       Navigator.of(context).pop(true);
+
     } catch (e) {
       if (!mounted) return;
       setState(() { isSubmitting = false; errorMessage = e.toString(); });
@@ -350,12 +380,27 @@ class _PickOutcomeScreenState extends State<PickOutcomeScreen> {
   Widget _tabBody() {
     switch (_selectedTabIndex) {
       case 1:
-        return ScoutTab(fixtureId: widget.fixture.id);
+        return ScoutTab(
+          fixtureId: widget.fixture.id,
+          leagueId: widget.fixture.leagueId,
+          season: widget.fixture.season,
+          homeTeamId: widget.fixture.homeTeamId,
+          homeTeamName: widget.fixture.homeTeam,
+          homeLogo: widget.fixture.homeLogo,
+          awayTeamId: widget.fixture.awayTeamId,
+          awayTeamName: widget.fixture.awayTeam,
+          awayLogo: widget.fixture.awayLogo,
+          isLeagueGame: ApiFootballService.leagueIds.values.contains(widget.fixture.leagueId),
+          oddsCache: oddsCache,
+        );
       case 2:
         return LineupTab(
           fixtureId: widget.fixture.id,
+          homeTeamId: widget.fixture.homeTeamId,
           homeTeamName: widget.fixture.homeTeam,
+          awayTeamId: widget.fixture.awayTeamId,
           awayTeamName: widget.fixture.awayTeam,
+          kickoff: widget.fixture.kickoff,
         );
       default:
         return _selectionsBody();

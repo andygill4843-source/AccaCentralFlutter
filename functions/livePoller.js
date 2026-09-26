@@ -256,11 +256,30 @@ function memberNameFor(membersSnap, memberId) {
   return memberDoc?.data()?.displayName ?? 'Someone';
 }
 
+/// Resolves any learning-engine prediction record for this fixture now
+/// that a final score exists — feeds the weight-learning pipeline.
+/// Guarded so a fixture is only ever resolved once.
+async function resolvePredictionRecord(fixtureId, homeGoals, awayGoals) {
+  try {
+    const predRef = db.collection('prediction_records').doc(String(fixtureId));
+    const predSnap = await predRef.get();
+    if (predSnap.exists && !predSnap.data().resolved) {
+      await predRef.update({
+        resolved: true,
+        actual: { homeGoals, awayGoals },
+        resolvedAt: new Date(),
+      });
+    }
+  } catch (e) {
+    console.error(`Couldn't resolve prediction_records for fixture ${fixtureId}:`, e.message);
+  }
+}
+
 // ── Full-time / early settlement notifications — category 'settlement' ──
 
 async function settleLegAndNotify({ leg, winning, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef, mutedCategoriesByMember }) {
   const newOutcome = winning ? 'won' : 'lost';
-  await db.collection('legs').doc(leg.id).update({ outcome: newOutcome });
+  await db.collection('legs').doc(leg.id).update({ outcome: newOutcome, settledAt: new Date() });
   if (winning) wonCountRef.count++;
 
   const memberName = memberNameFor(membersSnap, leg.memberId);
@@ -276,14 +295,15 @@ async function settleLegAndNotify({ leg, winning, teamId, membersSnap, allMember
         ? (winning
             ? `Job done! Your bet is in ✅ 🏋️ ⭐ — ${wonCountRef.count}/${totalLegs} won so far`
             : `Hard luck. Your bet didn't come in ❌ — ${wonCountRef.count}/${totalLegs} won so far`)
-        : `${memberName}'s bet is in ${winning ? '✅' : '❌'} — ${wonCountRef.count}/${totalLegs} won so far`,
-      body: `${leg.selectionDescription} — ${winning ? 'WON ✅' : 'LOST ❌'}`,
+        : (winning
+            ? `${memberName}'s bet is in ✅ — ${wonCountRef.count}/${totalLegs} won so far`
+            : `${memberName}'s bet has settled and it's a loss 🫣 — ${wonCountRef.count}/${totalLegs} won so far`),
     });
   }
 }
 
 async function settleAsEarlyWinner({ leg, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef, mutedCategoriesByMember }) {
-  await db.collection('legs').doc(leg.id).update({ outcome: 'won' });
+  await db.collection('legs').doc(leg.id).update({ outcome: 'won', settledAt: new Date() });
   wonCountRef.count++;
   const memberName = memberNameFor(membersSnap, leg.memberId);
 
@@ -305,7 +325,7 @@ async function settleAsEarlyWinner({ leg, teamId, membersSnap, allMemberIds, tot
 async function revertWonLegAndNotifyCorrection({
   leg, newOutcome, teamId, membersSnap, allMemberIds, totalLegs, wonCountRef, homeTeam, awayTeam, homeGoals, awayGoals, allEvents, mutedCategoriesByMember,
 }) {
-  await db.collection('legs').doc(leg.id).update({ outcome: newOutcome });
+  await db.collection('legs').doc(leg.id).update({ outcome: newOutcome, settledAt: new Date() });
   wonCountRef.count--;
   const memberName = memberNameFor(membersSnap, leg.memberId);
   const scoreLabel = `${homeTeam} ${homeGoals}-${awayGoals} ${awayTeam}`;
@@ -334,10 +354,10 @@ async function revertWonLegAndNotifyCorrection({
 }
 
 async function settleAsEarlyLossSilently(leg) {
-  await db.collection('legs').doc(leg.id).update({ outcome: 'lost' });
+  await db.collection('legs').doc(leg.id).update({ outcome: 'lost', settledAt: new Date() });
 }
 async function revertLostLegSilently(leg) {
-  await db.collection('legs').doc(leg.id).update({ outcome: 'pending' });
+  await db.collection('legs').doc(leg.id).update({ outcome: 'pending', settledAt: new Date() });
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -440,6 +460,27 @@ exports.liveMatchPoller = onSchedule(
 
       let allEvents = [];
 
+      // Half-time entry for the home screen's Acca News Feed — NOT a
+      // notification trigger, purely a feed entry. Idempotent via a
+      // fixed eventId per fixture.
+      if (statusShort === 'HT') {
+        const htId = `HT_${fixtureId}`;
+        const htExists = await db.collection('liveMatchEvents').where('eventId', '==', htId).limit(1).get();
+        if (htExists.empty) {
+          await db.collection('liveMatchEvents').add({
+            apiFootballFixtureId: fixtureId,
+            eventId: htId,
+            teamId,
+            type: 'HalfTime',
+            detail: 'Half Time',
+            elapsed: 45,
+            teamName: '',
+            playerName: null,
+            processedAt: new Date(),
+          });
+        }
+      }
+
       if (isLive) {
         const eventsData = await apiGet(`/fixtures/events?fixture=${fixtureId}`);
         allEvents = eventsData.response ?? [];
@@ -453,7 +494,7 @@ exports.liveMatchPoller = onSchedule(
 
         for (const event of allEvents) {
           const rawType = event.type;
-          const detail = event.detail || '';
+          const detail = (event.detail || '') === 'Normal Goal' ? 'Goal' : (event.detail || '');
           const detailLower = detail.toLowerCase();
 
           const isGoal = rawType === 'Goal' && detail !== 'Missed Penalty';
@@ -579,6 +620,22 @@ exports.liveMatchPoller = onSchedule(
       }
 
       if (isFinished) {
+        const ftId = `FT_${fixtureId}`;
+        const ftExists = await db.collection('liveMatchEvents').where('eventId', '==', ftId).limit(1).get();
+        if (ftExists.empty) {
+          await db.collection('liveMatchEvents').add({
+            apiFootballFixtureId: fixtureId,
+            eventId: ftId,
+            teamId,
+            type: 'FullTime',
+            detail: 'Full Time',
+            elapsed: 90,
+            teamName: '',
+            playerName: null,
+            processedAt: new Date(),
+          });
+        }
+
         for (const leg of legsForFixture) {
           if (leg.outcome !== 'pending') continue;
 
@@ -594,6 +651,10 @@ exports.liveMatchPoller = onSchedule(
             mutedCategoriesByMember,
           });
         }
+
+        // Resolve any learning-engine prediction record now that a
+        // final score exists for this fixture — once per fixture.
+        await resolvePredictionRecord(fixtureId, homeGoals, awayGoals);
       }
     }
   }

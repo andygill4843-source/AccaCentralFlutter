@@ -11,8 +11,8 @@ import 'fixture_card.dart';
 
 class LiveAccumulatorScreen extends StatefulWidget {
   final AppState appState;
-  final GameWeek gameWeek;
-  const LiveAccumulatorScreen({super.key, required this.appState, required this.gameWeek});
+  final GameWeek? gameWeek;
+  const LiveAccumulatorScreen({super.key, required this.appState, this.gameWeek});
   @override
   State<LiveAccumulatorScreen> createState() => _LiveAccumulatorScreenState();
 }
@@ -27,6 +27,8 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
   bool isLoading = true;
   String? errorMessage;
   Timer? pollTimer;
+
+  bool get _isLocked => widget.gameWeek?.isLocked ?? false;
 
   List<_LegGroup> get legGroups {
     final groups = <String, _LegGroup>{};
@@ -52,7 +54,11 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
   @override
   void initState() {
     super.initState();
-    loadLegs();
+    if (_isLocked) {
+      loadLegs();
+    } else {
+      isLoading = false;
+    }
   }
 
   @override
@@ -62,7 +68,8 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
   }
 
   Future<void> loadLegs() async {
-    if (widget.gameWeek.id == null) {
+    final gameWeek = widget.gameWeek;
+    if (gameWeek == null || gameWeek.id == null) {
       setState(() {
         errorMessage = 'No active gameweek.';
         isLoading = false;
@@ -70,28 +77,27 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
       return;
     }
     try {
-      final allLegs = await FirestoreService.instance.fetchLegs(widget.gameWeek.teamId);
-      final members = await FirestoreService.instance.fetchMembers(widget.gameWeek.teamId);
+      final allLegs = await FirestoreService.instance.fetchLegs(gameWeek.teamId);
+      final members = await FirestoreService.instance.fetchMembers(gameWeek.teamId);
       final userId = widget.appState.currentUser?.id;
       Member? me;
       if (userId != null) {
-        me = await FirestoreService.instance.fetchMember(teamId: widget.gameWeek.teamId, userId: userId);
+        me = await FirestoreService.instance.fetchMember(teamId: gameWeek.teamId, userId: userId);
       }
       final scopedLegs = allLegs
-          .where((l) => l.gameWeekId == widget.gameWeek.id && !l.isSecondaryTournamentLeg)
+          .where((l) => l.gameWeekId == gameWeek.id && !l.isSecondaryTournamentLeg)
           .toList();
       Map<int, LiveNotificationMute> mutes = {};
       if (me?.id != null) {
         final fixtureIds = scopedLegs.map((l) => l.apiFootballFixtureId).whereType<int>().toSet().toList();
         try {
           mutes = await FirestoreService.instance.fetchLiveNotificationMutesForMember(
-            teamId: widget.gameWeek.teamId,
+            teamId: gameWeek.teamId,
             memberId: me!.id!,
             apiFootballFixtureIds: fixtureIds,
           );
         } catch (_) {
-          // best-effort — a failure here shouldn't block the leg/score data
-          // from loading; the bell icon just won't reflect saved mutes yet.
+          // best-effort
         }
       }
       if (mounted) {
@@ -154,7 +160,7 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
       leg.outcome == LegOutcome.won || leg.outcome == LegOutcome.lost;
 
   Future<void> _showMuteSheet(int fixtureId) async {
-    if (currentMember?.id == null) return;
+    if (currentMember?.id == null || widget.gameWeek == null) return;
     await showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
@@ -187,7 +193,7 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
                     final updatedMap = Map<String, bool>.from(existing?.mutedCategories ?? {});
                     updatedMap[key] = muted;
                     final updated = LiveNotificationMute(
-                      teamId: widget.gameWeek.teamId,
+                      teamId: widget.gameWeek!.teamId,
                       memberId: currentMember!.id!,
                       apiFootballFixtureId: fixtureId,
                       mutedCategories: updatedMap,
@@ -195,7 +201,7 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
                     setSheetState(() => mutePrefsByFixture[fixtureId] = updated);
                     setState(() => mutePrefsByFixture[fixtureId] = updated);
                     await FirestoreService.instance.setLiveNotificationMuteCategory(
-                      teamId: widget.gameWeek.teamId,
+                      teamId: widget.gameWeek!.teamId,
                       memberId: currentMember!.id!,
                       apiFootballFixtureId: fixtureId,
                       category: key,
@@ -212,26 +218,22 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final groups = legGroups;
-    final total = legs.length;
-    final winning = winningLegsCount;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Live'),
         backgroundColor: AccaColors.primary,
         foregroundColor: Colors.white,
         actions: [
-          if (!isLoading)
+          if (_isLocked && !isLoading)
             Padding(
               padding: const EdgeInsets.only(right: 16),
               child: Center(
                 child: Text(
-                  '$winning / $total',
+                  '$winningLegsCount / ${legs.length}',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: winning == total && total > 0 ? AccaColors.gold : Colors.white,
+                    color: winningLegsCount == legs.length && legs.isNotEmpty ? AccaColors.gold : Colors.white,
                   ),
                 ),
               ),
@@ -239,31 +241,48 @@ class _LiveAccumulatorScreenState extends State<LiveAccumulatorScreen> {
         ],
       ),
       backgroundColor: AccaColors.background,
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : errorMessage != null
-              ? Center(child: Text(errorMessage!, style: const TextStyle(color: Colors.red)))
-              : legs.isEmpty
-                  ? const Center(
-                      child: Text('No legs submitted for this gameweek yet.',
-                          style: TextStyle(color: Colors.white70)),
-                    )
-                  : RefreshIndicator(
-                      onRefresh: refreshFixtures,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.all(12),
-                        itemCount: groups.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) => _legGroupCard(groups[index]),
-                      ),
-                    ),
+      body: _buildBody(),
     );
   }
 
-  /// Two-line status box for the header's centre — half + minute while
-  /// live, "FT" once finished, or the fixture's own date/time label if
-  /// it hasn't kicked off yet (a leg's fixture can still be pre-kickoff
-  /// when this screen is opened early).
+  Widget _buildBody() {
+    if (widget.gameWeek == null) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('Currently no active gameweek', style: TextStyle(color: Colors.white70, fontSize: 15), textAlign: TextAlign.center),
+        ),
+      );
+    }
+    if (!_isLocked) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Gameweek selections underway. Live scores will show following selection',
+            style: TextStyle(color: Colors.white70, fontSize: 15),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    if (isLoading) return const Center(child: CircularProgressIndicator());
+    if (errorMessage != null) return Center(child: Text(errorMessage!, style: const TextStyle(color: Colors.red)));
+    if (legs.isEmpty) {
+      return const Center(child: Text('No legs submitted for this gameweek yet.', style: TextStyle(color: Colors.white70)));
+    }
+    final groups = legGroups;
+    return RefreshIndicator(
+      onRefresh: refreshFixtures,
+      child: ListView.separated(
+        padding: const EdgeInsets.all(12),
+        itemCount: groups.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 8),
+        itemBuilder: (context, index) => _legGroupCard(groups[index]),
+      ),
+    );
+  }
+
   Widget _liveCenter(ApiFootballFixture? fixture) {
     if (fixture == null) {
       return const Text('—', style: TextStyle(color: Colors.white54));

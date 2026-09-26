@@ -3,6 +3,7 @@ import 'app_state.dart';
 import 'firestore_service.dart';
 import 'models.dart';
 import 'main.dart'; // for AccaColors
+import 'physio_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
   final String teamId;
@@ -58,10 +59,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     switch (type) {
       case NotificationType.gameweekLocked:
       case NotificationType.kudosReceived:
+      case NotificationType.lineupConfirmed:
+      case NotificationType.scoutSelectionAssessment:
+        widget.appState.requestTabNavigation(0);
+        break;
       case NotificationType.physioUsed:
-        // Home tab (0) and Physio tab (5) respectively — Physio shows the
-        // fitness report; kudos and locked legs live on the Home tab.
-        widget.appState.requestTabNavigation(type == NotificationType.physioUsed ? 5 : 0);
+        widget.appState.requestTabNavigation(1);
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => PhysioScreen(appState: widget.appState, teamId: widget.teamId)),
+        );
         break;
       case NotificationType.newGameweek:
       case NotificationType.deadlineReminder:
@@ -83,12 +89,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case NotificationType.tournamentOpponentSubmitted:
       case NotificationType.tournamentRoundWon:
       case NotificationType.tournamentRoundLost:
-        // Acca Hub tab (1) — Fines, Challenges, and Tournament are all
-        // accessible from the Hub's own buttons.
         widget.appState.requestTabNavigation(1);
         break;
       case NotificationType.leaguePosition:
-        // League Table tab (2).
         widget.appState.requestTabNavigation(2);
         break;
     }

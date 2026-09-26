@@ -6,7 +6,6 @@ import 'models.dart';
 import 'gameweek_setup_screen.dart';
 import 'submit_leg_screen.dart';
 import 'current_leg_screen.dart';
-import 'live_accumulator_screen.dart';
 import 'manual_settlement_screen.dart';
 import 'accumulator_summary_screen.dart';
 import 'fines_screen.dart';
@@ -18,6 +17,8 @@ import 'notifications_screen.dart';
 import 'selection_history_screen.dart';
 import 'tournament_leg_selection_screen.dart';
 import 'tournament_screen.dart';
+import 'awards_screen.dart';
+import 'physio_screen.dart';
 
 class AccaHubScreen extends StatefulWidget {
   final AppState appState;
@@ -55,10 +56,6 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     }
   }
 
-  /// Firestore surfaces a manager-only rules rejection as a
-  /// FirebaseException with code 'permission-denied' — swap that raw error
-  /// for something a non-manager will actually understand. Anything else
-  /// (network issues, etc.) falls back to the original message.
   String _friendlyError(Object error, String fallback) {
     if (error is FirebaseException && error.code == 'permission-denied') {
       return 'Only manager profiles can update gameweeks.';
@@ -95,13 +92,6 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     if (mounted) setState(() => isLoading = false);
   }
 
-  /// Decides which screen to show for "Pick selection" — CurrentLegScreen
-  /// (with its "revise selection" option) if the member already has a
-  /// leg for this gameweek, SubmitLegScreen otherwise. For a gameweek
-  /// that's also an active tournament round, the member needs BOTH a
-  /// primary and a secondary pick instead of a single leg, handled by
-  /// the tournament branch below before falling through to the normal
-  /// single-leg flow.
   Future<void> openSubmitLeg() async {
     final gameWeek = activeGameWeek;
     if (gameWeek == null || gameWeek.id == null) {
@@ -117,14 +107,6 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
     final member = await FirestoreService.instance.fetchMember(teamId: widget.teamId, userId: userId);
     if (member == null || member.id == null || !mounted) return;
 
-    // If this gameweek is a tournament round and the member is still
-    // active (unresolved, not a bye) in it, they need a primary AND a
-    // secondary pick rather than the usual single leg — everyone else
-    // (not in the tournament, already eliminated, or had a bye) just gets
-    // the normal single-leg flow below, unchanged.
-    // Wrapped defensively: if this check itself fails (e.g. a permissions
-    // issue), fall through to the normal single-leg flow rather than
-    // silently doing nothing, and actually show what went wrong.
     TournamentMatch? activeMatch;
     try {
       activeMatch = await FirestoreService.instance.fetchActiveTournamentMatchForGameWeek(
@@ -152,8 +134,6 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
       final hasSecondary = legs.any((l) => l.tournamentMatchId == matchId && l.isSecondaryTournamentLeg);
       if (!mounted) return;
       if (!hasPrimary) {
-        // Neither pick made yet — primary first, then immediately prompt
-        // for the secondary, then land on the summary screen.
         await Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => SubmitLegScreen(
@@ -184,8 +164,6 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
           ),
         );
       } else if (!hasSecondary) {
-        // Primary already exists (e.g. resumed after being interrupted) —
-        // go straight to prompting for the secondary.
         await Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => SubmitLegScreen(
@@ -202,8 +180,6 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
         );
       }
       if (!mounted) return;
-      // Both picks exist (or now do) — land on the summary screen, where
-      // either can be changed or swapped.
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => TournamentLegSelectionScreen(
@@ -255,16 +231,6 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
       );
     }
     load();
-  }
-
-  Future<void> openLiveView() async {
-    if (activeGameWeek == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No active gameweeks for selection.')));
-      return;
-    }
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => LiveAccumulatorScreen(appState: widget.appState, gameWeek: activeGameWeek!)),
-    );
   }
 
   Future<void> openGameWeekManager() async {
@@ -405,7 +371,13 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                       Row(
                         children: [
                           Expanded(
-                            child: _hubButton(icon: Icons.live_tv, label: 'Live scores', onTap: openLiveView),
+                            child: _hubButton(
+                              icon: Icons.military_tech,
+                              label: 'Trophies',
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(builder: (_) => AwardsScreen(appState: widget.appState, teamId: widget.teamId)),
+                              ),
+                            ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
@@ -442,6 +414,16 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                         children: [
                           Expanded(
                             child: _hubButton(
+                              icon: Icons.medical_services,
+                              label: 'Physio',
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(builder: (_) => PhysioScreen(appState: widget.appState, teamId: widget.teamId)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _hubButton(
                               icon: Icons.emoji_events,
                               label: 'Tournament',
                               onTap: () => Navigator.of(context).push(
@@ -449,12 +431,18 @@ class _AccaHubScreenState extends State<AccaHubScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 12),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
                           Expanded(
                             child: isManager
                                 ? _hubButton(icon: Icons.bar_chart, label: 'Odds selection', onTap: openAccumulatorSummary)
                                 : const SizedBox.shrink(),
                           ),
+                          const SizedBox(width: 12),
+                          const Expanded(child: SizedBox.shrink()),
                         ],
                       ),
                       if (isManager) ...[
